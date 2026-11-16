@@ -3,11 +3,12 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { supabase } from '@/lib/supabase/client';
 import { useAuth } from '@/app/providers';
-import { Equipment, isManagerOrOrganizer, canDeleteRecords, UserProfile } from '@/types';
+import { Equipment, isManagerOrOrganizer, canDeleteRecords } from '@/types';
 import { EquipmentForm } from '@/components/forms/EquipmentForm';
 import { EquipmentFormData } from '@/lib/validations';
 import { Button } from '@/components/ui/Button';
 
+// Real Equipment Inventory with Main Super Admin as Author
 const INITIAL_INVENTORY: Equipment[] = [
   {
     id: 'eq-1',
@@ -16,8 +17,8 @@ const INITIAL_INVENTORY: Equipment[] = [
     serial_number: 'SN-SNY-9481',
     status: 'available',
     entered_by: '00000000-0000-0000-0000-000000000001',
-    entered_by_name: 'Admin Organizer',
-    entered_by_regnum: 'REG-ADMIN-01',
+    entered_by_name: 'Sooriya Moorthy',
+    entered_by_regnum: 'REG-ORG-001',
     created_at: new Date().toISOString(),
   },
   {
@@ -27,8 +28,8 @@ const INITIAL_INVENTORY: Equipment[] = [
     serial_number: 'SN-CAN-1024',
     status: 'available',
     entered_by: '00000000-0000-0000-0000-000000000001',
-    entered_by_name: 'Admin Organizer',
-    entered_by_regnum: 'REG-ADMIN-01',
+    entered_by_name: 'Sooriya Moorthy',
+    entered_by_regnum: 'REG-ORG-001',
     created_at: new Date().toISOString(),
   },
   {
@@ -36,10 +37,10 @@ const INITIAL_INVENTORY: Equipment[] = [
     name: 'DJI RS 3 Pro Gimbal',
     category: 'Stabilizer',
     serial_number: 'SN-DJI-5521',
-    status: 'checked_out',
-    entered_by: '00000000-0000-0000-0000-000000000002',
-    entered_by_name: 'Desk Manager',
-    entered_by_regnum: 'REG-MGR-02',
+    status: 'available',
+    entered_by: '00000000-0000-0000-0000-000000000001',
+    entered_by_name: 'Sooriya Moorthy',
+    entered_by_regnum: 'REG-ORG-001',
     created_at: new Date().toISOString(),
   },
   {
@@ -47,10 +48,10 @@ const INITIAL_INVENTORY: Equipment[] = [
     name: 'Rode Wireless GO II Dual',
     category: 'Audio',
     serial_number: 'SN-ROD-8812',
-    status: 'pending_return',
-    entered_by: '00000000-0000-0000-0000-000000000002',
-    entered_by_name: 'Desk Manager',
-    entered_by_regnum: 'REG-MGR-02',
+    status: 'available',
+    entered_by: '00000000-0000-0000-0000-000000000001',
+    entered_by_name: 'Sooriya Moorthy',
+    entered_by_regnum: 'REG-ORG-001',
     created_at: new Date().toISOString(),
   },
   {
@@ -59,9 +60,9 @@ const INITIAL_INVENTORY: Equipment[] = [
     category: 'Lens',
     serial_number: 'SN-SNY-4491',
     status: 'available',
-    entered_by: '00000000-0000-0000-0000-000000000002',
-    entered_by_name: 'Desk Manager',
-    entered_by_regnum: 'REG-MGR-02',
+    entered_by: '00000000-0000-0000-0000-000000000001',
+    entered_by_name: 'Sooriya Moorthy',
+    entered_by_regnum: 'REG-ORG-001',
     created_at: new Date().toISOString(),
   },
 ];
@@ -94,8 +95,8 @@ export default function InventoryPage() {
       if (data && !error && data.length > 0) {
         const mapped = data.map((item: any) => ({
           ...item,
-          entered_by_name: item.entered_by_user?.full_name || 'Admin Organizer',
-          entered_by_regnum: item.entered_by_user?.register_number || 'REG-ADMIN-01',
+          entered_by_name: item.entered_by_user?.full_name || 'Sooriya Moorthy',
+          entered_by_regnum: item.entered_by_user?.register_number || 'REG-ORG-001',
         }));
         setEquipment(mapped as Equipment[]);
       }
@@ -137,8 +138,8 @@ export default function InventoryPage() {
 
   const handleAddEquipment = async (data: EquipmentFormData) => {
     try {
-      const creatorName = userProfile?.full_name || (role === 'organizer' ? 'Admin Organizer' : 'Desk Manager');
-      const creatorReg = userProfile?.register_number || (role === 'organizer' ? 'REG-ADMIN-01' : 'REG-MGR-02');
+      const creatorName = userProfile?.full_name || 'Sooriya Moorthy';
+      const creatorReg = userProfile?.register_number || 'REG-ORG-001';
 
       const { data: existing } = await supabase
         .from('equipment')
@@ -149,7 +150,7 @@ export default function InventoryPage() {
       if (existing) {
         return {
           success: false,
-          error: `Serial number "${data.serial_number}" already exists in the database.`,
+          error: `Serial number "${data.serial_number}" already exists in the inventory.`,
         };
       }
 
@@ -160,7 +161,7 @@ export default function InventoryPage() {
         category: data.category,
         serial_number: data.serial_number,
         status: 'available',
-        entered_by: userProfile?.id || null,
+        entered_by: userProfile?.id || '00000000-0000-0000-0000-000000000001',
         entered_by_name: creatorName,
         entered_by_regnum: creatorReg,
         created_at: new Date().toISOString(),
@@ -303,7 +304,7 @@ export default function InventoryPage() {
         </div>
       </div>
 
-      {/* Manual Equipment Entry Form (Organizer / Manager only) */}
+      {/* Manual Equipment Entry Form */}
       {isManager && showAddForm && (
         <div className="bg-white border-2 border-black rounded p-5 shadow-sm space-y-4">
           <div className="border-b border-neutral-200 pb-2">
@@ -319,11 +320,11 @@ export default function InventoryPage() {
             currentUserProfile={
               userProfile || {
                 id: '00000000-0000-0000-0000-000000000001',
-                auth_id: null,
-                full_name: role === 'organizer' ? 'Admin Organizer' : 'Desk Manager',
-                register_number: role === 'organizer' ? 'REG-ADMIN-01' : 'REG-MGR-02',
-                email: 'admin@cameramanager.local',
-                role: role,
+                auth_id: '00000000-0000-0000-0000-000000000001',
+                full_name: 'Sooriya Moorthy',
+                register_number: 'REG-ORG-001',
+                email: 'sooriyamoorthy0107@gmail.com',
+                role: 'organizer',
                 status: 'approved',
                 created_at: '',
               }
@@ -394,17 +395,15 @@ export default function InventoryPage() {
                   </td>
                   <td className="py-2.5 px-3">{getStatusBadge(item.status)}</td>
                   <td className="py-2.5 px-3 font-medium text-neutral-900">
-                    {item.entered_by_name ? (
-                      <div className="flex items-center gap-1.5">
-                        <span className="font-semibold text-neutral-900">{item.entered_by_name}</span>
-                        <span className="text-neutral-400">-</span>
-                        <span className="text-[11px] font-mono text-neutral-600">
-                          {item.entered_by_regnum}
-                        </span>
-                      </div>
-                    ) : (
-                      <span className="text-neutral-600">Admin Organizer - REG-ADMIN-01</span>
-                    )}
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-semibold text-neutral-900">
+                        {item.entered_by_name || 'Sooriya Moorthy'}
+                      </span>
+                      <span className="text-neutral-400">-</span>
+                      <span className="text-[11px] font-mono text-neutral-600">
+                        {item.entered_by_regnum || 'REG-ORG-001'}
+                      </span>
+                    </div>
                   </td>
                   <td className="py-2.5 px-3 text-neutral-500 text-[11px]">
                     {new Date(item.created_at).toLocaleDateString()}

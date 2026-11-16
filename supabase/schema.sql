@@ -1,9 +1,12 @@
 -- ==============================================================================
 -- Equipment Checkout System: PostgreSQL Schema for Supabase
 -- Tables: users, equipment, checkout_logs, activity_logs
--- Granular RBAC: Organizer (Super Admin with delete privileges) vs Manager (Operations)
--- User Signup Approval Flow & Human-Readable Activity Logging
+-- Primary Super Admin: sooriyamoorthy0107@gmail.com / Sooriya123*
+-- All sample users removed; real camera inventory preserved.
 -- ==============================================================================
+
+-- 0. Required Extensions
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- 1. Create ENUM Types (Idempotent)
 DO $$ BEGIN
@@ -24,7 +27,7 @@ EXCEPTION
     WHEN duplicate_object THEN null;
 END $$;
 
--- 2. Users Table (with Approval Status)
+-- 2. Users Table
 CREATE TABLE IF NOT EXISTS public.users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     auth_id UUID UNIQUE REFERENCES auth.users(id) ON DELETE CASCADE,
@@ -103,7 +106,7 @@ AS $$
     SELECT * FROM public.users WHERE auth_id = (SELECT auth.uid()) LIMIT 1;
 $$;
 
--- Organizer has Super Admin access (adding, editing, AND DELETING)
+-- Organizer has Super Admin access (adding, editing, and deleting)
 CREATE OR REPLACE FUNCTION public.is_organizer()
 RETURNS BOOLEAN
 LANGUAGE sql
@@ -118,7 +121,7 @@ AS $$
     );
 $$;
 
--- Organizer and Manager both have operational management access
+-- Organizer and Manager have operational management access
 CREATE OR REPLACE FUNCTION public.is_manager_or_organizer()
 RETURNS BOOLEAN
 LANGUAGE sql
@@ -165,7 +168,6 @@ CREATE POLICY "Managers can update or user update own non-role" ON public.users
         OR (auth_id = (SELECT auth.uid()) AND role = (SELECT u.role FROM public.users u WHERE u.auth_id = (SELECT auth.uid())))
     );
 
--- STRICT DELETION GUARDRAIL: ONLY Organizer can delete users
 DROP POLICY IF EXISTS "Only organizers can delete users" ON public.users;
 CREATE POLICY "Only organizers can delete users" ON public.users
     FOR DELETE TO authenticated
@@ -196,7 +198,6 @@ CREATE POLICY "Managers and organizers can update equipment" ON public.equipment
         )
     );
 
--- STRICT DELETION GUARDRAIL: ONLY Organizer can delete equipment (Manager CANNOT delete)
 DROP POLICY IF EXISTS "Only organizers can delete equipment" ON public.equipment;
 CREATE POLICY "Only organizers can delete equipment" ON public.equipment
     FOR DELETE TO authenticated
@@ -231,7 +232,6 @@ CREATE POLICY "Allow checkout updates" ON public.checkout_logs
         OR user_id IN (SELECT id FROM public.users WHERE auth_id = (SELECT auth.uid()))
     );
 
--- STRICT DELETION GUARDRAIL: ONLY Organizer can delete checkout logs
 DROP POLICY IF EXISTS "Only organizers can delete checkout logs" ON public.checkout_logs;
 CREATE POLICY "Only organizers can delete checkout logs" ON public.checkout_logs
     FOR DELETE TO authenticated
@@ -248,26 +248,87 @@ CREATE POLICY "Allow system to insert activity logs" ON public.activity_logs
     FOR INSERT TO authenticated
     WITH CHECK (true);
 
--- STRICT DELETION GUARDRAIL: ONLY Organizer can delete activity logs
 DROP POLICY IF EXISTS "Only organizers can delete activity logs" ON public.activity_logs;
 CREATE POLICY "Only organizers can delete activity logs" ON public.activity_logs
     FOR DELETE TO authenticated
     USING (public.is_organizer());
 
--- 13. Initial Seed Data
-INSERT INTO public.users (id, full_name, register_number, email, role, status) VALUES
-    ('00000000-0000-0000-0000-000000000001', 'Admin Organizer', 'REG-ADMIN-01', 'organizer@cameramanager.local', 'organizer', 'approved'),
-    ('00000000-0000-0000-0000-000000000002', 'Desk Manager', 'REG-MGR-02', 'manager@cameramanager.local', 'manager', 'approved'),
-    ('00000000-0000-0000-0000-000000000003', 'Priya Patel', 'REG-COORD-03', 'priya@cameramanager.local', 'coordinator', 'approved'),
-    ('00000000-0000-0000-0000-000000000004', 'Rahul Sharma', 'REG-VOL-04', 'rahul@cameramanager.local', 'volunteer', 'approved')
-ON CONFLICT (register_number) DO UPDATE 
-SET full_name = EXCLUDED.full_name, role = EXCLUDED.role, status = EXCLUDED.status;
+-- 13. Seed Main Super Admin Account (sooriyamoorthy0107@gmail.com / Sooriya123*)
+-- Automatically populates auth.users (pre-confirmed, no email link needed)
+INSERT INTO auth.users (
+    instance_id,
+    id,
+    aud,
+    role,
+    email,
+    encrypted_password,
+    email_confirmed_at,
+    raw_app_meta_data,
+    raw_user_meta_data,
+    created_at,
+    updated_at,
+    confirmation_token,
+    email_change,
+    email_change_token_new,
+    recovery_token
+)
+SELECT
+    '00000000-0000-0000-0000-000000000000',
+    '00000000-0000-0000-0000-000000000001',
+    'authenticated',
+    'authenticated',
+    'sooriyamoorthy0107@gmail.com',
+    crypt('Sooriya123*', gen_salt('bf')),
+    timezone('utc'::text, now()),
+    '{"provider":"email","providers":["email"]}',
+    '{"full_name":"Sooriya Moorthy","register_number":"REG-ORG-001","role":"organizer"}',
+    timezone('utc'::text, now()),
+    timezone('utc'::text, now()),
+    '',
+    '',
+    '',
+    ''
+WHERE NOT EXISTS (
+    SELECT 1 FROM auth.users WHERE email = 'sooriyamoorthy0107@gmail.com'
+);
 
+-- Seed into public.users as Super Admin Organizer (Approved)
+INSERT INTO public.users (
+    id,
+    auth_id,
+    full_name,
+    register_number,
+    email,
+    role,
+    status
+) VALUES (
+    '00000000-0000-0000-0000-000000000001',
+    '00000000-0000-0000-0000-000000000001',
+    'Sooriya Moorthy',
+    'REG-ORG-001',
+    'sooriyamoorthy0107@gmail.com',
+    'organizer',
+    'approved'
+)
+ON CONFLICT (register_number) DO UPDATE 
+SET full_name = EXCLUDED.full_name, email = EXCLUDED.email, role = 'organizer', status = 'approved';
+
+-- 14. Real Equipment Inventory (All camera gear preserved & available)
 INSERT INTO public.equipment (id, name, category, serial_number, status, entered_by) VALUES
     ('eq-1', 'Sony Alpha A7 IV (Body)', 'Camera', 'SN-SNY-9481', 'available', '00000000-0000-0000-0000-000000000001'),
     ('eq-2', 'Canon EOS R6 Mark II', 'Camera', 'SN-CAN-1024', 'available', '00000000-0000-0000-0000-000000000001'),
-    ('eq-3', 'DJI RS 3 Pro Gimbal', 'Stabilizer', 'SN-DJI-5521', 'available', '00000000-0000-0000-0000-000000000002'),
-    ('eq-4', 'Rode Wireless GO II Dual', 'Audio', 'SN-ROD-8812', 'available', '00000000-0000-0000-0000-000000000002'),
-    ('eq-5', 'Sony FE 24-70mm f/2.8 GM II', 'Lens', 'SN-SNY-4491', 'available', '00000000-0000-0000-0000-000000000002')
+    ('eq-3', 'DJI RS 3 Pro Gimbal', 'Stabilizer', 'SN-DJI-5521', 'available', '00000000-0000-0000-0000-000000000001'),
+    ('eq-4', 'Rode Wireless GO II Dual', 'Audio', 'SN-ROD-8812', 'available', '00000000-0000-0000-0000-000000000001'),
+    ('eq-5', 'Sony FE 24-70mm f/2.8 GM II', 'Lens', 'SN-SNY-4491', 'available', '00000000-0000-0000-0000-000000000001')
 ON CONFLICT (serial_number) DO UPDATE
 SET name = EXCLUDED.name, category = EXCLUDED.category, status = EXCLUDED.status;
+
+-- Initial Activity Log
+INSERT INTO public.activity_logs (actor_name, actor_regnum, actor_role, action, details)
+VALUES (
+    'Sooriya Moorthy',
+    'REG-ORG-001',
+    'organizer',
+    'SYSTEM_INIT',
+    'Super Admin Sooriya Moorthy (REG-ORG-001) initialized the Equipment Checkout System.'
+);

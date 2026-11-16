@@ -8,50 +8,21 @@ import { Equipment, CheckoutLog, UserProfile, isManagerOrOrganizer } from '@/typ
 import { DashboardTable } from '@/components/DashboardTable';
 import { Button } from '@/components/ui/Button';
 
-// Default initial fallback data matching seed schema
+// Main Super Admin user (all sample mock users removed)
 const DEFAULT_USERS: UserProfile[] = [
   {
     id: '00000000-0000-0000-0000-000000000001',
-    auth_id: null,
-    full_name: 'Admin Organizer',
-    register_number: 'REG-ADMIN-01',
-    email: 'organizer@cameramanager.local',
+    auth_id: '00000000-0000-0000-0000-000000000001',
+    full_name: 'Sooriya Moorthy',
+    register_number: 'REG-ORG-001',
+    email: 'sooriyamoorthy0107@gmail.com',
     role: 'organizer',
     status: 'approved',
-    created_at: new Date().toISOString(),
-  },
-  {
-    id: '00000000-0000-0000-0000-000000000002',
-    auth_id: null,
-    full_name: 'Desk Manager',
-    register_number: 'REG-MGR-02',
-    email: 'manager@cameramanager.local',
-    role: 'manager',
-    status: 'approved',
-    created_at: new Date().toISOString(),
-  },
-  {
-    id: '00000000-0000-0000-0000-000000000003',
-    auth_id: null,
-    full_name: 'Priya Patel',
-    register_number: 'REG-COORD-03',
-    email: 'priya@cameramanager.local',
-    role: 'coordinator',
-    status: 'approved',
-    created_at: new Date().toISOString(),
-  },
-  {
-    id: '00000000-0000-0000-0000-000000000004',
-    auth_id: null,
-    full_name: 'Rahul Sharma',
-    register_number: 'REG-VOL-04',
-    email: 'rahul@cameramanager.local',
-    role: 'volunteer',
-    status: 'approved',
-    created_at: new Date().toISOString(),
+    created_at: new Date('2026-01-01').toISOString(),
   },
 ];
 
+// Preserved Real Camera Inventory
 const DEFAULT_EQUIPMENT: Equipment[] = [
   {
     id: 'eq-1',
@@ -60,8 +31,8 @@ const DEFAULT_EQUIPMENT: Equipment[] = [
     serial_number: 'SN-SNY-9481',
     status: 'available',
     entered_by: '00000000-0000-0000-0000-000000000001',
-    entered_by_name: 'Admin Organizer',
-    entered_by_regnum: 'REG-ADMIN-01',
+    entered_by_name: 'Sooriya Moorthy',
+    entered_by_regnum: 'REG-ORG-001',
     created_at: new Date().toISOString(),
   },
   {
@@ -71,8 +42,8 @@ const DEFAULT_EQUIPMENT: Equipment[] = [
     serial_number: 'SN-CAN-1024',
     status: 'available',
     entered_by: '00000000-0000-0000-0000-000000000001',
-    entered_by_name: 'Admin Organizer',
-    entered_by_regnum: 'REG-ADMIN-01',
+    entered_by_name: 'Sooriya Moorthy',
+    entered_by_regnum: 'REG-ORG-001',
     created_at: new Date().toISOString(),
   },
   {
@@ -80,10 +51,10 @@ const DEFAULT_EQUIPMENT: Equipment[] = [
     name: 'DJI RS 3 Pro Gimbal',
     category: 'Stabilizer',
     serial_number: 'SN-DJI-5521',
-    status: 'checked_out',
-    entered_by: '00000000-0000-0000-0000-000000000002',
-    entered_by_name: 'Desk Manager',
-    entered_by_regnum: 'REG-MGR-02',
+    status: 'available',
+    entered_by: '00000000-0000-0000-0000-000000000001',
+    entered_by_name: 'Sooriya Moorthy',
+    entered_by_regnum: 'REG-ORG-001',
     created_at: new Date().toISOString(),
   },
   {
@@ -91,10 +62,10 @@ const DEFAULT_EQUIPMENT: Equipment[] = [
     name: 'Rode Wireless GO II Dual',
     category: 'Audio',
     serial_number: 'SN-ROD-8812',
-    status: 'pending_return',
-    entered_by: '00000000-0000-0000-0000-000000000002',
-    entered_by_name: 'Desk Manager',
-    entered_by_regnum: 'REG-MGR-02',
+    status: 'available',
+    entered_by: '00000000-0000-0000-0000-000000000001',
+    entered_by_name: 'Sooriya Moorthy',
+    entered_by_regnum: 'REG-ORG-001',
     created_at: new Date().toISOString(),
   },
   {
@@ -103,43 +74,14 @@ const DEFAULT_EQUIPMENT: Equipment[] = [
     category: 'Lens',
     serial_number: 'SN-SNY-4491',
     status: 'available',
-    entered_by: '00000000-0000-0000-0000-000000000002',
-    entered_by_name: 'Desk Manager',
-    entered_by_regnum: 'REG-MGR-02',
+    entered_by: '00000000-0000-0000-0000-000000000001',
+    entered_by_name: 'Sooriya Moorthy',
+    entered_by_regnum: 'REG-ORG-001',
     created_at: new Date().toISOString(),
   },
 ];
 
-const DEFAULT_CHECKOUTS: CheckoutLog[] = [
-  {
-    id: 'log-1',
-    equipment_id: 'eq-3',
-    user_id: '00000000-0000-0000-0000-000000000004',
-    checkout_time: new Date(Date.now() - 3600000 * 3).toISOString(),
-    expected_return_time: null,
-    actual_return_time: null,
-    surrender_requested: false,
-    status: 'active',
-    notes: 'Main Stage coverage',
-    created_at: new Date().toISOString(),
-    equipment: DEFAULT_EQUIPMENT[2],
-    user: DEFAULT_USERS[3],
-  },
-  {
-    id: 'log-2',
-    equipment_id: 'eq-4',
-    user_id: '00000000-0000-0000-0000-000000000003',
-    checkout_time: new Date(Date.now() - 3600000 * 5).toISOString(),
-    expected_return_time: null,
-    actual_return_time: null,
-    surrender_requested: true,
-    status: 'pending_return',
-    notes: 'Interviews in Media Room',
-    created_at: new Date().toISOString(),
-    equipment: DEFAULT_EQUIPMENT[3],
-    user: DEFAULT_USERS[2],
-  },
-];
+const DEFAULT_CHECKOUTS: CheckoutLog[] = [];
 
 export default function DashboardPage() {
   const { userProfile, role, status } = useAuth();
@@ -174,11 +116,11 @@ export default function DashboardPage() {
         .select('*, equipment:equipment_id(*), user:user_id(*)')
         .order('checkout_time', { ascending: false });
 
-      if (coData && coData.length > 0) {
+      if (coData) {
         setCheckouts(coData as CheckoutLog[]);
       }
     } catch (err) {
-      console.warn('Using local fallback state:', err);
+      console.warn('Using local state:', err);
     } finally {
       setLoading(false);
     }
@@ -194,11 +136,9 @@ export default function DashboardPage() {
   const checkedOutCount = equipment.filter((e) => e.status === 'checked_out').length;
   const pendingReturnCount = equipment.filter((e) => e.status === 'pending_return').length;
 
-  // Actor identification helpers
-  const currentActorName = userProfile?.full_name || (role === 'organizer' ? 'Admin Organizer' : 'Desk Manager');
-  const currentActorReg = userProfile?.register_number || (role === 'organizer' ? 'REG-ADMIN-01' : 'REG-MGR-02');
+  const currentActorName = userProfile?.full_name || 'Sooriya Moorthy';
+  const currentActorReg = userProfile?.register_number || 'REG-ORG-001';
 
-  // Actions with human-readable logging integration
   const handleAssignCheckout = async (equipmentId: string, targetUserId: string, notes?: string) => {
     try {
       const res = await fetch('/api/checkout', {
@@ -393,7 +333,7 @@ export default function DashboardPage() {
       showNotification('Your account is pending approval by an Organizer or Manager.', 'error');
       return;
     }
-    const activeUserId = userProfile?.id || users[3]?.id;
+    const activeUserId = userProfile?.id || users[0]?.id;
     await handleAssignCheckout(equipmentId, activeUserId, 'Volunteer self-checkout request');
   };
 

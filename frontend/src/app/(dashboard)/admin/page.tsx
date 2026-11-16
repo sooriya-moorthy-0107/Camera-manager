@@ -3,89 +3,32 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabase/client';
 import { useAuth } from '@/app/providers';
-import { UserProfile, UserRole, UserStatus, ActivityLog, isManagerOrOrganizer, canDeleteRecords } from '@/types';
+import { UserProfile, UserRole, ActivityLog, isManagerOrOrganizer, canDeleteRecords } from '@/types';
 import { Button } from '@/components/ui/Button';
 
+// Main Super Admin user (all sample mock users removed)
 const INITIAL_USERS: UserProfile[] = [
   {
     id: '00000000-0000-0000-0000-000000000001',
-    auth_id: null,
-    full_name: 'Admin Organizer',
-    register_number: 'REG-ADMIN-01',
-    email: 'organizer@cameramanager.local',
+    auth_id: '00000000-0000-0000-0000-000000000001',
+    full_name: 'Sooriya Moorthy',
+    register_number: 'REG-ORG-001',
+    email: 'sooriyamoorthy0107@gmail.com',
     role: 'organizer',
     status: 'approved',
-    created_at: new Date(Date.now() - 86400000 * 3).toISOString(),
-  },
-  {
-    id: '00000000-0000-0000-0000-000000000002',
-    auth_id: null,
-    full_name: 'Desk Manager',
-    register_number: 'REG-MGR-02',
-    email: 'manager@cameramanager.local',
-    role: 'manager',
-    status: 'approved',
-    created_at: new Date(Date.now() - 86400000 * 2).toISOString(),
-  },
-  {
-    id: '00000000-0000-0000-0000-000000000003',
-    auth_id: null,
-    full_name: 'Priya Patel',
-    register_number: 'REG-COORD-03',
-    email: 'priya@cameramanager.local',
-    role: 'coordinator',
-    status: 'approved',
-    created_at: new Date(Date.now() - 86400000).toISOString(),
-  },
-  {
-    id: '00000000-0000-0000-0000-000000000004',
-    auth_id: null,
-    full_name: 'Rahul Sharma',
-    register_number: 'REG-VOL-04',
-    email: 'rahul@cameramanager.local',
-    role: 'volunteer',
-    status: 'approved',
-    created_at: new Date(Date.now() - 86400000).toISOString(),
-  },
-  {
-    id: '00000000-0000-0000-0000-000000000005',
-    auth_id: null,
-    full_name: 'Sneha Reddy',
-    register_number: 'REG-VOL-05',
-    email: 'sneha@cameramanager.local',
-    role: 'volunteer',
-    status: 'pending',
-    created_at: new Date().toISOString(),
+    created_at: new Date('2026-01-01').toISOString(),
   },
 ];
 
 const INITIAL_LOGS: ActivityLog[] = [
   {
     id: 'act-1',
-    actor_name: 'Admin Organizer',
-    actor_regnum: 'REG-ADMIN-01',
+    actor_name: 'Sooriya Moorthy',
+    actor_regnum: 'REG-ORG-001',
     actor_role: 'organizer',
-    action: 'ASSIGN_EQUIPMENT',
-    details: 'Admin Organizer (REG-ADMIN-01) assigned DJI RS 3 Pro Gimbal (SN-DJI-5521) to Rahul Sharma (REG-VOL-04)',
-    created_at: new Date(Date.now() - 3600000 * 3).toISOString(),
-  },
-  {
-    id: 'act-2',
-    actor_name: 'Rahul Sharma',
-    actor_regnum: 'REG-VOL-04',
-    actor_role: 'volunteer',
-    action: 'REQUEST_RETURN',
-    details: 'Rahul Sharma (REG-VOL-04) requested equipment return for Rode Wireless GO II (SN-ROD-8812)',
-    created_at: new Date(Date.now() - 3600000 * 2).toISOString(),
-  },
-  {
-    id: 'act-3',
-    actor_name: 'Desk Manager',
-    actor_regnum: 'REG-MGR-02',
-    actor_role: 'manager',
-    action: 'APPROVE_RETURN',
-    details: 'Desk Manager (REG-MGR-02) approved return of Rode Wireless GO II (SN-ROD-8812) from Priya Patel (REG-COORD-03)',
-    created_at: new Date(Date.now() - 3600000 * 1).toISOString(),
+    action: 'SYSTEM_INIT',
+    details: 'Super Admin Sooriya Moorthy (REG-ORG-001) initialized the Equipment Checkout System.',
+    created_at: new Date().toISOString(),
   },
 ];
 
@@ -156,8 +99,8 @@ export default function AdminPage() {
 
   // --- Handlers ---
   const handleApproveUser = async (user: UserProfile) => {
-    const actorName = userProfile?.full_name || (role === 'organizer' ? 'Admin Organizer' : 'Desk Manager');
-    const actorReg = userProfile?.register_number || (role === 'organizer' ? 'REG-ADMIN-01' : 'REG-MGR-02');
+    const actorName = userProfile?.full_name || 'Sooriya Moorthy';
+    const actorReg = userProfile?.register_number || 'REG-ORG-001';
     const logSentence = `${actorName} (${actorReg}) approved account registration for ${user.full_name} (${user.register_number}) as ${user.role}`;
 
     try {
@@ -192,8 +135,8 @@ export default function AdminPage() {
   };
 
   const handleRejectUser = async (user: UserProfile) => {
-    const actorName = userProfile?.full_name || (role === 'organizer' ? 'Admin Organizer' : 'Desk Manager');
-    const actorReg = userProfile?.register_number || (role === 'organizer' ? 'REG-ADMIN-01' : 'REG-MGR-02');
+    const actorName = userProfile?.full_name || 'Sooriya Moorthy';
+    const actorReg = userProfile?.register_number || 'REG-ORG-001';
     const logSentence = `${actorName} (${actorReg}) rejected account registration for ${user.full_name} (${user.register_number})`;
 
     try {
@@ -215,8 +158,8 @@ export default function AdminPage() {
   };
 
   const handleRoleChange = async (userId: string, targetUser: UserProfile, newRole: UserRole) => {
-    const actorName = userProfile?.full_name || (role === 'organizer' ? 'Admin Organizer' : 'Desk Manager');
-    const actorReg = userProfile?.register_number || (role === 'organizer' ? 'REG-ADMIN-01' : 'REG-MGR-02');
+    const actorName = userProfile?.full_name || 'Sooriya Moorthy';
+    const actorReg = userProfile?.register_number || 'REG-ORG-001';
     const logSentence = `${actorName} (${actorReg}) changed role of ${targetUser.full_name} (${targetUser.register_number}) to ${newRole}`;
 
     try {
@@ -259,8 +202,8 @@ export default function AdminPage() {
       return;
     }
 
-    const actorName = userProfile?.full_name || 'Admin Organizer';
-    const actorReg = userProfile?.register_number || 'REG-ADMIN-01';
+    const actorName = userProfile?.full_name || 'Sooriya Moorthy';
+    const actorReg = userProfile?.register_number || 'REG-ORG-001';
     const logSentence = `${actorName} (${actorReg}) deleted user account ${user.full_name} (${user.register_number})`;
 
     try {
@@ -300,8 +243,8 @@ export default function AdminPage() {
       return;
     }
 
-    const actorName = userProfile?.full_name || (role === 'organizer' ? 'Admin Organizer' : 'Desk Manager');
-    const actorReg = userProfile?.register_number || (role === 'organizer' ? 'REG-ADMIN-01' : 'REG-MGR-02');
+    const actorName = userProfile?.full_name || 'Sooriya Moorthy';
+    const actorReg = userProfile?.register_number || 'REG-ORG-001';
     const logSentence = `${actorName} (${actorReg}) created new user account for ${newUserName} (${newUserReg}) as ${newUserRole}`;
 
     const newUser: UserProfile = {
@@ -311,7 +254,7 @@ export default function AdminPage() {
       register_number: newUserReg.trim().toUpperCase(),
       email: newUserEmail.trim(),
       role: newUserRole,
-      status: 'approved', // Directly approved by manager/organizer
+      status: 'approved',
       created_at: new Date().toISOString(),
     };
 
@@ -690,7 +633,7 @@ export default function AdminPage() {
                   required
                   value={newUserName}
                   onChange={(e) => setNewUserName(e.target.value)}
-                  placeholder="e.g. Aakash Verma"
+                  placeholder="e.g. John Doe"
                   className="w-full px-3 py-1.5 text-xs bg-white border border-neutral-300 rounded focus:outline-none focus:border-black"
                 />
               </div>
@@ -704,7 +647,7 @@ export default function AdminPage() {
                   required
                   value={newUserReg}
                   onChange={(e) => setNewUserReg(e.target.value.toUpperCase())}
-                  placeholder="e.g. REG-VOL-06"
+                  placeholder="e.g. REG-VOL-01"
                   className="w-full px-3 py-1.5 text-xs uppercase font-mono bg-white border border-neutral-300 rounded focus:outline-none focus:border-black"
                 />
               </div>
@@ -718,7 +661,7 @@ export default function AdminPage() {
                   required
                   value={newUserEmail}
                   onChange={(e) => setNewUserEmail(e.target.value)}
-                  placeholder="user@cameramanager.local"
+                  placeholder="user@example.com"
                   className="w-full px-3 py-1.5 text-xs bg-white border border-neutral-300 rounded focus:outline-none focus:border-black"
                 />
               </div>
