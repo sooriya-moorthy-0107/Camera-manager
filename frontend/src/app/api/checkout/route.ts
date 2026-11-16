@@ -14,10 +14,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { equipment_id, user_id, expected_return_time, notes } = validation.data;
-    const actorName = body.actor_name || 'Admin Organizer';
-    const actorReg = body.actor_regnum || 'REG-ADMIN-01';
-    const actorRole = body.actor_role || 'organizer';
+    const { equipment_id, user_id, expected_return_time, notes, action } = validation.data;
+    const actorName = body.actor_name || 'User';
+    const actorReg = body.actor_regnum || 'REG-VOL-01';
+    const actorRole = body.actor_role || 'volunteer';
+    const isVolunteerRequest = action === 'request_checkout' || actorRole === 'volunteer' || actorRole === 'coordinator';
 
     const supabase = createServerClient();
 
@@ -53,7 +54,73 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 3. Insert checkout log
+    const targetName = targetUser?.full_name || actorName;
+    const targetReg = targetUser?.register_number || actorReg;
+
+    // 3. Handle Volunteer Checkout Request vs Manager Direct Assignment
+    if (isVolunteerRequest) {
+      const requestNotes = `[CHECKOUT_REQUEST] ${notes || 'Volunteer checkout request'}`.trim();
+      let newLog = null;
+
+      // Attempt insert with 'pending' status
+      const { data: logData, error: logError } = await supabase
+        .from('checkout_logs')
+        .insert({
+          equipment_id,
+          user_id,
+          expected_return_time: expected_return_time || null,
+          notes: requestNotes,
+          status: 'pending',
+          surrender_requested: false,
+        })
+        .select('*, equipment:equipment_id(*), user:user_id(*)')
+        .single();
+
+      if (logError) {
+        // Fallback for check constraint violation if DB has not yet applied 'pending'
+        const { data: fallbackData, error: fallbackError } = await supabase
+          .from('checkout_logs')
+          .insert({
+            equipment_id,
+            user_id,
+            expected_return_time: expected_return_time || null,
+            notes: requestNotes,
+            status: 'pending_return',
+            surrender_requested: false,
+          })
+          .select('*, equipment:equipment_id(*), user:user_id(*)')
+          .single();
+
+        if (fallbackError) {
+          return NextResponse.json(
+            { error: `Failed to create checkout request: ${fallbackError.message}` },
+            { status: 500 }
+          );
+        }
+        newLog = fallbackData;
+      } else {
+        newLog = logData;
+      }
+
+      const logSentence = `${actorName} (${actorReg}) submitted checkout request for ${gear.name} (${gear.serial_number})`;
+
+      await supabase.from('activity_logs').insert({
+        actor_name: actorName,
+        actor_regnum: actorReg,
+        actor_role: actorRole,
+        action: 'REQUEST_CHECKOUT',
+        details: logSentence,
+      });
+
+      return NextResponse.json({
+        success: true,
+        message: 'Checkout request submitted. Awaiting Organizer or Manager approval.',
+        checkout: newLog,
+        is_request: true,
+      });
+    }
+
+    // Direct Assignment by Manager / Organizer
     const { data: newLog, error: logError } = await supabase
       .from('checkout_logs')
       .insert({
@@ -64,7 +131,7 @@ export async function POST(req: NextRequest) {
         status: 'active',
         surrender_requested: false,
       })
-      .select()
+      .select('*, equipment:equipment_id(*), user:user_id(*)')
       .single();
 
     if (logError) {
@@ -74,12 +141,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 4. Update equipment status
+    // Update equipment status
     await supabase.from('equipment').update({ status: 'checked_out' }).eq('id', equipment_id);
 
-    // 5. Log human-readable transaction
-    const targetName = targetUser?.full_name || 'User';
-    const targetReg = targetUser?.register_number || 'REG';
     const logSentence = `${actorName} (${actorReg}) assigned ${gear.name} (${gear.serial_number}) to ${targetName} (${targetReg})`;
 
     await supabase.from('activity_logs').insert({
@@ -94,6 +158,7 @@ export async function POST(req: NextRequest) {
       success: true,
       message: logSentence,
       checkout: newLog,
+      is_request: false,
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Internal Server Error';
@@ -108,7 +173,7 @@ export async function PATCH(req: NextRequest) {
 
     if (!validation.success) {
       return NextResponse.json(
-        { error: 'Invalid return request payload', details: validation.error.flatten().fieldErrors },
+        { error: 'Invalid checkout action payload', details: validation.error.flatten().fieldErrors },
         { status: 400 }
       );
     }
@@ -138,6 +203,89 @@ export async function PATCH(req: NextRequest) {
       ? `${logEntry.user.full_name} (${logEntry.user.register_number})`
       : 'holder';
 
+    // 1. APPROVE CHECKOUT REQUEST
+    if (action === 'approve_checkout') {
+      const checkoutTimestamp = new Date().toISOString();
+
+      try {
+        await supabase.rpc('approve_checkout', {
+          p_checkout_id: checkout_id,
+          p_actor_name: actorName,
+          p_actor_regnum: actorReg,
+          p_actor_role: actorRole,
+        });
+      } catch {
+        // Fallback
+      }
+
+      const cleanNotes = logEntry?.notes
+        ? logEntry.notes.replace('[CHECKOUT_REQUEST]', '').trim()
+        : null;
+
+      await supabase
+        .from('checkout_logs')
+        .update({
+          status: 'active',
+          assigned_by: body.actor_id || null,
+          checkout_time: checkoutTimestamp,
+          notes: cleanNotes || null,
+          surrender_requested: false,
+        })
+        .eq('id', checkout_id);
+
+      await supabase.from('equipment').update({ status: 'checked_out' }).eq('id', equipment_id);
+
+      const logSentence = `${actorName} (${actorReg}) approved checkout of ${gearLabel} for ${userLabel}`;
+      await supabase.from('activity_logs').insert({
+        actor_name: actorName,
+        actor_regnum: actorReg,
+        actor_role: actorRole,
+        action: 'APPROVE_CHECKOUT',
+        details: logSentence,
+      });
+
+      return NextResponse.json({ success: true, status: 'checked_out', message: logSentence });
+    }
+
+    // 2. REJECT CHECKOUT REQUEST
+    if (action === 'reject_checkout') {
+      const rejectTimestamp = new Date().toISOString();
+
+      try {
+        await supabase.rpc('reject_checkout', {
+          p_checkout_id: checkout_id,
+          p_actor_name: actorName,
+          p_actor_regnum: actorReg,
+          p_actor_role: actorRole,
+        });
+      } catch {
+        // Fallback
+      }
+
+      await supabase
+        .from('checkout_logs')
+        .update({
+          status: 'rejected',
+          actual_return_time: rejectTimestamp,
+          surrender_requested: false,
+        })
+        .eq('id', checkout_id);
+
+      await supabase.from('equipment').update({ status: 'available' }).eq('id', equipment_id);
+
+      const logSentence = `${actorName} (${actorReg}) rejected checkout request of ${gearLabel} for ${userLabel}`;
+      await supabase.from('activity_logs').insert({
+        actor_name: actorName,
+        actor_regnum: actorReg,
+        actor_role: actorRole,
+        action: 'REJECT_CHECKOUT',
+        details: logSentence,
+      });
+
+      return NextResponse.json({ success: true, status: 'available', message: logSentence });
+    }
+
+    // 3. REQUEST RETURN (Volunteer surrenders gear)
     if (action === 'request_return') {
       await supabase
         .from('checkout_logs')
@@ -162,6 +310,7 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ success: true, status: 'pending_return', message: logSentence });
     }
 
+    // 4. APPROVE RETURN
     if (action === 'approve_return') {
       const returnTimestamp = new Date().toISOString();
 
@@ -189,6 +338,7 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ success: true, status: 'available', message: logSentence });
     }
 
+    // 5. REJECT RETURN
     if (action === 'reject_return') {
       await supabase
         .from('checkout_logs')
@@ -213,6 +363,7 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ success: true, status: 'checked_out', message: logSentence });
     }
 
+    // 6. FORCE RETURN
     if (action === 'force_return') {
       const returnTimestamp = new Date().toISOString();
 

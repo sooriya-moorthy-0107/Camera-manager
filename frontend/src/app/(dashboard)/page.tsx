@@ -93,6 +93,12 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(false);
   const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
+  // Volunteer Checkout Request Modal State
+  const [requestModalGear, setRequestModalGear] = useState<Equipment | null>(null);
+  const [requestNotes, setRequestNotes] = useState('');
+  const [requestExpectedReturn, setRequestExpectedReturn] = useState('');
+  const [isSubmittingRequest, setIsSubmittingRequest] = useState(false);
+
   const showNotification = (message: string, type: 'success' | 'error' = 'success') => {
     setNotification({ message, type });
     setTimeout(() => setNotification(null), 4000);
@@ -129,7 +135,7 @@ export default function DashboardPage() {
       const { data: coData } = await supabase
         .from('checkout_logs')
         .select('*, equipment:equipment_id(*), user:user_id(*)')
-        .order('checkout_time', { ascending: false });
+        .order('created_at', { ascending: false });
 
       if (coData) {
         setCheckouts(coData as CheckoutLog[]);
@@ -143,6 +149,13 @@ export default function DashboardPage() {
 
   useEffect(() => {
     loadData();
+    const interval = setInterval(loadData, 4000);
+    const onCheckoutUpdated = () => loadData();
+    window.addEventListener('cm_checkout_updated', onCheckoutUpdated);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('cm_checkout_updated', onCheckoutUpdated);
+    };
   }, [loadData]);
 
   // Statistics
@@ -343,14 +356,132 @@ export default function DashboardPage() {
     }
   };
 
-  const handleRequestCheckoutDirect = async (equipmentId: string) => {
+  const handleApproveCheckout = async (checkoutId: string, equipmentId: string) => {
+    try {
+      const res = await fetch('/api/checkout', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          checkout_id: checkoutId,
+          equipment_id: equipmentId,
+          action: 'approve_checkout',
+          actor_name: currentActorName,
+          actor_regnum: currentActorReg,
+          actor_role: role,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to approve checkout');
+
+      showNotification(data.message || 'Equipment checkout approved.');
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('cm_checkout_updated'));
+      }
+      await loadData();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Error approving checkout';
+      showNotification(msg, 'error');
+    }
+  };
+
+  const handleRejectCheckout = async (checkoutId: string, equipmentId: string) => {
+    try {
+      const res = await fetch('/api/checkout', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          checkout_id: checkoutId,
+          equipment_id: equipmentId,
+          action: 'reject_checkout',
+          actor_name: currentActorName,
+          actor_regnum: currentActorReg,
+          actor_role: role,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to reject checkout');
+
+      showNotification(data.message || 'Checkout request rejected.');
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('cm_checkout_updated'));
+      }
+      await loadData();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Error rejecting checkout';
+      showNotification(msg, 'error');
+    }
+  };
+
+  const handleOpenCheckoutRequest = (item: Equipment) => {
     if (status === 'pending') {
       showNotification('Your account is pending approval by an Organizer or Manager.', 'error');
       return;
     }
-    const activeUserId = userProfile?.id || users[0]?.id;
-    await handleAssignCheckout(equipmentId, activeUserId, 'Volunteer self-checkout request');
+    setRequestModalGear(item);
+    setRequestNotes('');
+    setRequestExpectedReturn('');
   };
+
+  const handleSubmitCheckoutRequest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!requestModalGear) return;
+    if (!userProfile?.id) {
+      showNotification('User profile not loaded. Please log in again.', 'error');
+      return;
+    }
+
+    setIsSubmittingRequest(true);
+    try {
+      const res = await fetch('/api/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          equipment_id: requestModalGear.id,
+          user_id: userProfile.id,
+          expected_return_time: requestExpectedReturn || null,
+          notes: requestNotes,
+          action: 'request_checkout',
+          actor_name: currentActorName,
+          actor_regnum: currentActorReg,
+          actor_role: role,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to submit checkout request');
+      }
+
+      showNotification('Checkout request submitted. Awaiting Organizer or Manager approval.');
+      setRequestModalGear(null);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('cm_checkout_updated'));
+      }
+      await loadData();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to submit request';
+      showNotification(msg, 'error');
+    } finally {
+      setIsSubmittingRequest(false);
+    }
+  };
+
+  const isPendingCheckoutRequest = (c: CheckoutLog) => {
+    return (
+      c.actual_return_time === null &&
+      (c.status === 'pending' ||
+        c.status === 'pending_checkout' ||
+        (Boolean(c.notes?.includes('[CHECKOUT_REQUEST]')) &&
+          c.status !== 'returned' &&
+          c.status !== 'rejected' &&
+          !c.surrender_requested))
+    );
+  };
+
+  const pendingCheckoutRequests = checkouts.filter(isPendingCheckoutRequest);
+  const pendingCheckoutCount = pendingCheckoutRequests.length;
 
   return (
     <div className="space-y-6">
@@ -405,6 +536,69 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* Pending Checkout Requests Alert Banner (for Managers/Organizers) */}
+      {isManager && pendingCheckoutCount > 0 && (
+        <div className="bg-white border-2 border-amber-600 rounded p-4 space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-amber-200 pb-2">
+            <div>
+              <div className="text-xs font-bold uppercase tracking-wider text-amber-900">
+                Action Required: {pendingCheckoutCount} Volunteer Checkout Request{pendingCheckoutCount > 1 ? 's' : ''} Pending
+              </div>
+              <p className="text-xs text-neutral-700 mt-0.5">
+                Volunteers have requested equipment checkout. Review and approve or reject to allocate gear.
+              </p>
+            </div>
+            <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-amber-600 text-white uppercase tracking-wider">
+              {pendingCheckoutCount} Pending Review
+            </span>
+          </div>
+
+          <div className="divide-y divide-neutral-200">
+            {pendingCheckoutRequests.map((req) => (
+              <div
+                key={req.id}
+                className="py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+              >
+                <div>
+                  <div className="font-semibold text-neutral-900 flex items-center gap-2">
+                    <span>{req.equipment?.name || 'Equipment'}</span>
+                    <span className="font-mono text-[11px] text-neutral-500 font-normal">
+                      ({req.equipment?.serial_number})
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-neutral-600 mt-0.5">
+                    Requested by: <strong>{req.user?.full_name || 'Volunteer'}</strong>{' '}
+                    <span className="font-mono">({req.user?.register_number})</span> • {req.user?.email}
+                  </div>
+                  {req.notes && (
+                    <div className="text-[11px] text-neutral-600 italic mt-0.5">
+                      Note: {req.notes.replace('[CHECKOUT_REQUEST]', '').trim()}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    onClick={() => handleApproveCheckout(req.id, req.equipment_id)}
+                  >
+                    Approve Checkout
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handleRejectCheckout(req.id, req.equipment_id)}
+                  >
+                    Reject
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Pending Return Alert Banner (for Managers/Organizers) */}
       {isManager && pendingReturnCount > 0 && (
         <div className="bg-white border-2 border-amber-600 rounded p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -423,7 +617,7 @@ export default function DashboardPage() {
       )}
 
       {/* Metrics Row */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         <div className="bg-white border border-neutral-300 p-4 rounded">
           <div className="text-[11px] font-semibold uppercase tracking-wider text-neutral-500">
             Total Gear
@@ -436,6 +630,13 @@ export default function DashboardPage() {
             Available
           </div>
           <div className="text-2xl font-bold text-emerald-700 mt-1 font-mono">{availableCount}</div>
+        </div>
+
+        <div className="bg-white border border-neutral-300 p-4 rounded">
+          <div className="text-[11px] font-semibold uppercase tracking-wider text-neutral-500">
+            Pending Requests
+          </div>
+          <div className="text-2xl font-bold text-amber-600 mt-1 font-mono">{pendingCheckoutCount}</div>
         </div>
 
         <div className="bg-white border border-neutral-300 p-4 rounded">
@@ -475,9 +676,87 @@ export default function DashboardPage() {
           onApproveReturn={handleApproveReturn}
           onRejectReturn={handleRejectReturn}
           onForceReturn={handleForceReturn}
-          onRequestCheckoutDirect={handleRequestCheckoutDirect}
+          onRequestCheckoutDirect={handleOpenCheckoutRequest}
+          onApproveCheckout={handleApproveCheckout}
+          onRejectCheckout={handleRejectCheckout}
         />
       </div>
+
+      {/* Volunteer Checkout Request Modal */}
+      {requestModalGear && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white border-2 border-black rounded max-w-sm w-full p-5 space-y-4 shadow-xl">
+            <div className="flex items-center justify-between border-b border-neutral-200 pb-2">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-black">
+                Request Equipment Checkout
+              </h3>
+              <button
+                onClick={() => setRequestModalGear(null)}
+                className="text-neutral-500 hover:text-black font-mono text-sm"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="text-xs text-neutral-700 space-y-1">
+              <div className="font-semibold text-neutral-900 text-sm">
+                {requestModalGear.name}
+              </div>
+              <div className="flex items-center gap-2 text-[11px] text-neutral-500 font-mono">
+                <span>SN: {requestModalGear.serial_number}</span>
+                <span>•</span>
+                <span>{requestModalGear.category}</span>
+              </div>
+            </div>
+
+            <form onSubmit={handleSubmitCheckoutRequest} className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-neutral-800 uppercase tracking-wider mb-1">
+                  Purpose / Notes
+                </label>
+                <textarea
+                  rows={2}
+                  value={requestNotes}
+                  onChange={(e) => setRequestNotes(e.target.value)}
+                  placeholder="e.g. Club photoshoot, event recording..."
+                  className="w-full px-3 py-2 text-xs bg-white border border-neutral-300 rounded focus:outline-none focus:border-black"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-neutral-800 uppercase tracking-wider mb-1">
+                  Expected Return Date / Time (Optional)
+                </label>
+                <input
+                  type="datetime-local"
+                  value={requestExpectedReturn}
+                  onChange={(e) => setRequestExpectedReturn(e.target.value)}
+                  className="w-full px-3 py-2 text-xs bg-white border border-neutral-300 rounded focus:outline-none focus:border-black font-mono"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-neutral-200">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setRequestModalGear(null)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  size="sm"
+                  loading={isSubmittingRequest}
+                >
+                  Submit Request
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

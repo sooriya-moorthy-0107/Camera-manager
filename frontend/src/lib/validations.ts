@@ -24,6 +24,7 @@ export const checkoutSchema = z.object({
   user_id: z.string().uuid('Invalid user ID'),
   expected_return_time: z.string().optional().nullable(),
   notes: z.string().max(500, 'Notes must be under 500 characters').optional().nullable(),
+  action: z.enum(['assign_checkout', 'request_checkout']).optional(),
 });
 
 export type CheckoutFormData = z.infer<typeof checkoutSchema>;
@@ -31,7 +32,14 @@ export type CheckoutFormData = z.infer<typeof checkoutSchema>;
 export const returnRequestSchema = z.object({
   checkout_id: z.string().uuid('Invalid checkout log ID'),
   equipment_id: z.string().uuid('Invalid equipment ID'),
-  action: z.enum(['request_return', 'approve_return', 'reject_return', 'force_return']),
+  action: z.enum([
+    'request_return',
+    'approve_return',
+    'reject_return',
+    'force_return',
+    'approve_checkout',
+    'reject_checkout',
+  ]),
   notes: z.string().max(500).optional().nullable(),
 });
 

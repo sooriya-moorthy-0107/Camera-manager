@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabase/client';
 import { useAuth } from '@/app/providers';
-import { UserProfile, UserRole, ActivityLog, isManagerOrOrganizer, canDeleteRecords } from '@/types';
+import { UserProfile, UserRole, ActivityLog, CheckoutLog, isManagerOrOrganizer, canDeleteRecords } from '@/types';
 import { Button } from '@/components/ui/Button';
 
 // Main Super Admin user (all sample mock users removed)
@@ -37,8 +37,9 @@ export default function AdminPage() {
   const isManager = isManagerOrOrganizer(role);
   const isOrg = canDeleteRecords(role); // ONLY organizer has delete permissions
 
-  const [activeTab, setActiveTab] = useState<'users_role' | 'log'>('users_role');
+  const [activeTab, setActiveTab] = useState<'users_role' | 'checkouts' | 'log'>('users_role');
   const [users, setUsers] = useState<UserProfile[]>(INITIAL_USERS);
+  const [checkouts, setCheckouts] = useState<CheckoutLog[]>([]);
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>(INITIAL_LOGS);
   const [loading, setLoading] = useState(false);
   const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
@@ -98,6 +99,16 @@ export default function AdminPage() {
       const mergedUsers = Array.from(mergedMap.values());
       setUsers(mergedUsers);
 
+      // Fetch checkout logs
+      const { data: cData } = await supabase
+        .from('checkout_logs')
+        .select('*, equipment:equipment_id(*), user:user_id(*)')
+        .order('created_at', { ascending: false });
+
+      if (cData) {
+        setCheckouts(cData as CheckoutLog[]);
+      }
+
       const { data: aData } = await supabase
         .from('activity_logs')
         .select('*')
@@ -116,12 +127,15 @@ export default function AdminPage() {
   useEffect(() => {
     if (isManager) {
       loadData();
-      const interval = setInterval(loadData, 5000);
+      const interval = setInterval(loadData, 4000);
       const onUserRegistered = () => loadData();
+      const onCheckoutUpdated = () => loadData();
       window.addEventListener('cm_user_registered', onUserRegistered);
+      window.addEventListener('cm_checkout_updated', onCheckoutUpdated);
       return () => {
         clearInterval(interval);
         window.removeEventListener('cm_user_registered', onUserRegistered);
+        window.removeEventListener('cm_checkout_updated', onCheckoutUpdated);
       };
     }
   }, [isManager, loadData]);
@@ -311,6 +325,70 @@ export default function AdminPage() {
       showToast(msg, 'error');
     } finally {
       setIsResettingPassword(false);
+    }
+  };
+
+  const handleApproveCheckout = async (checkout: CheckoutLog) => {
+    const actorName = userProfile?.full_name || 'Sooriya Moorthy';
+    const actorReg = userProfile?.register_number || 'REG-ORG-001';
+
+    try {
+      const res = await fetch('/api/checkout', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          checkout_id: checkout.id,
+          equipment_id: checkout.equipment_id,
+          action: 'approve_checkout',
+          actor_name: actorName,
+          actor_regnum: actorReg,
+          actor_role: role,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to approve checkout');
+
+      showToast(`Approved checkout of ${checkout.equipment?.name || 'Equipment'} for ${checkout.user?.full_name || 'Volunteer'}.`);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('cm_checkout_updated'));
+      }
+      await loadData();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Error approving checkout';
+      showToast(msg, 'error');
+    }
+  };
+
+  const handleRejectCheckout = async (checkout: CheckoutLog) => {
+    const actorName = userProfile?.full_name || 'Sooriya Moorthy';
+    const actorReg = userProfile?.register_number || 'REG-ORG-001';
+
+    try {
+      const res = await fetch('/api/checkout', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          checkout_id: checkout.id,
+          equipment_id: checkout.equipment_id,
+          action: 'reject_checkout',
+          actor_name: actorName,
+          actor_regnum: actorReg,
+          actor_role: role,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to reject checkout');
+
+      showToast('Checkout request rejected.');
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('cm_checkout_updated'));
+      }
+      await loadData();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Error rejecting checkout';
+      showToast(msg, 'error');
     }
   };
 
@@ -510,6 +588,21 @@ export default function AdminPage() {
   const pendingUsers = users.filter((u) => u.status === 'pending');
   const activeUsers = users.filter((u) => u.status !== 'pending');
 
+  const isPendingCheckoutRequest = (c: CheckoutLog) => {
+    return (
+      c.actual_return_time === null &&
+      (c.status === 'pending' ||
+        c.status === 'pending_checkout' ||
+        (Boolean(c.notes?.includes('[CHECKOUT_REQUEST]')) &&
+          c.status !== 'returned' &&
+          c.status !== 'rejected' &&
+          !c.surrender_requested))
+    );
+  };
+
+  const pendingCheckouts = checkouts.filter(isPendingCheckoutRequest);
+  const activeAndHistoryCheckouts = checkouts.filter((c) => !isPendingCheckoutRequest(c));
+
   return (
     <div className="space-y-6">
       {/* Toast Notification */}
@@ -556,7 +649,7 @@ export default function AdminPage() {
         </div>
       </div>
 
-      {/* Tab Selector: Users and Role | Log */}
+      {/* Tab Selector: Users and Role | Checkout Requests | Log */}
       <div className="flex gap-2 border-b border-neutral-300 pb-2">
         <button
           onClick={() => setActiveTab('users_role')}
@@ -570,6 +663,21 @@ export default function AdminPage() {
           {pendingUsers.length > 0 && (
             <span className="ml-1.5 px-1.5 py-0.2 bg-amber-600 text-white rounded-full text-[10px]">
               {pendingUsers.length} Pending
+            </span>
+          )}
+        </button>
+        <button
+          onClick={() => setActiveTab('checkouts')}
+          className={`px-3 py-1.5 text-xs font-semibold uppercase tracking-wider rounded ${
+            activeTab === 'checkouts'
+              ? 'bg-black text-white'
+              : 'text-neutral-600 hover:text-black hover:bg-neutral-200'
+          }`}
+        >
+          Checkout Requests ({checkouts.length})
+          {pendingCheckouts.length > 0 && (
+            <span className="ml-1.5 px-1.5 py-0.2 bg-amber-600 text-white rounded-full text-[10px]">
+              {pendingCheckouts.length} Pending
             </span>
           )}
         </button>
@@ -588,6 +696,23 @@ export default function AdminPage() {
       {/* ----------------- USERS AND ROLE TAB ----------------- */}
       {activeTab === 'users_role' && (
         <div className="space-y-6">
+          {/* Pending Checkout Requests Alert Banner on Users tab */}
+          {pendingCheckouts.length > 0 && (
+            <div className="bg-white border-2 border-amber-600 rounded p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <div className="text-xs font-bold uppercase tracking-wider text-amber-900">
+                  Action Required: {pendingCheckouts.length} Equipment Checkout Request{pendingCheckouts.length > 1 ? 's' : ''} Pending
+                </div>
+                <p className="text-xs text-neutral-600 mt-0.5">
+                  Volunteers have requested equipment checkout. Review and approve or reject to allocate gear.
+                </p>
+              </div>
+              <Button size="sm" variant="primary" onClick={() => setActiveTab('checkouts')}>
+                Review Requests ({pendingCheckouts.length})
+              </Button>
+            </div>
+          )}
+
           {/* Pending Signups Approval Section */}
           {pendingUsers.length > 0 && (
             <div className="bg-white border-2 border-amber-600 rounded p-4 space-y-3">
@@ -738,6 +863,171 @@ export default function AdminPage() {
                       </td>
                     </tr>
                   ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ----------------- CHECKOUT REQUESTS TAB ----------------- */}
+      {activeTab === 'checkouts' && (
+        <div className="space-y-6">
+          {/* Pending Requests Section */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between border-b border-neutral-300 pb-2">
+              <div>
+                <h3 className="text-xs font-bold uppercase tracking-wider text-neutral-900 flex items-center gap-2">
+                  <span>Pending Volunteer Checkout Requests</span>
+                  {pendingCheckouts.length > 0 && (
+                    <span className="bg-amber-600 text-white text-[10px] px-1.5 py-0.5 rounded font-mono font-bold">
+                      {pendingCheckouts.length} PENDING
+                    </span>
+                  )}
+                </h3>
+                <p className="text-xs text-neutral-500 mt-0.5">
+                  Review and authorize equipment checkout requests submitted by volunteers.
+                </p>
+              </div>
+            </div>
+
+            {pendingCheckouts.length === 0 ? (
+              <div className="bg-white border border-neutral-300 rounded p-8 text-center text-xs text-neutral-500">
+                No pending checkout requests. When volunteers request equipment, their requests will appear here for review.
+              </div>
+            ) : (
+              <div className="bg-white border-2 border-amber-600 rounded divide-y divide-neutral-200">
+                {pendingCheckouts.map((req) => (
+                  <div
+                    key={req.id}
+                    className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 text-xs"
+                  >
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-neutral-900 text-sm">
+                          {req.equipment?.name || 'Equipment'}
+                        </span>
+                        <span className="font-mono text-xs text-neutral-600 bg-neutral-100 border border-neutral-300 px-1.5 py-0.5 rounded">
+                          {req.equipment?.serial_number || 'SN'}
+                        </span>
+                        <span className="text-[10px] font-semibold bg-neutral-100 text-neutral-700 uppercase px-1.5 py-0.5 rounded">
+                          {req.equipment?.category || 'Gear'}
+                        </span>
+                      </div>
+
+                      <div className="text-neutral-700 flex flex-wrap items-center gap-2">
+                        <span>Requested by:</span>
+                        <strong className="text-neutral-900 font-semibold">
+                          {req.user?.full_name || 'Volunteer'}
+                        </strong>
+                        <span className="font-mono text-neutral-500">
+                          ({req.user?.register_number || 'REG'})
+                        </span>
+                        <span className="text-neutral-400">•</span>
+                        <span className="text-neutral-600">{req.user?.email}</span>
+                      </div>
+
+                      {req.notes && (
+                        <div className="text-xs text-neutral-600 bg-neutral-50 p-2 rounded border border-neutral-200 mt-1">
+                          <span className="font-semibold text-neutral-800">Purpose / Note: </span>
+                          {req.notes.replace('[CHECKOUT_REQUEST]', '').trim() || 'No notes provided'}
+                        </div>
+                      )}
+
+                      {req.expected_return_time && (
+                        <div className="text-[11px] text-neutral-500 font-mono">
+                          Expected Return:{' '}
+                          {new Date(req.expected_return_time).toLocaleString()}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2 self-start md:self-center">
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        onClick={() => handleApproveCheckout(req)}
+                      >
+                        Approve Checkout
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleRejectCheckout(req)}
+                      >
+                        Reject
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Allocation & Checkout History Section */}
+          <div className="space-y-3">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-neutral-800">
+              Active Allocations & Checkout History
+            </h3>
+            <div className="border border-neutral-300 rounded overflow-x-auto bg-white">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="bg-neutral-100 border-b border-neutral-300 text-neutral-800 uppercase tracking-wider font-semibold">
+                    <th className="py-2.5 px-3">Equipment</th>
+                    <th className="py-2.5 px-3">Allocated To</th>
+                    <th className="py-2.5 px-3">Status</th>
+                    <th className="py-2.5 px-3">Checkout Time</th>
+                    <th className="py-2.5 px-3">Return Time</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-neutral-200">
+                  {activeAndHistoryCheckouts.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="py-8 text-center text-neutral-500">
+                        No previous checkout records found.
+                      </td>
+                    </tr>
+                  ) : (
+                    activeAndHistoryCheckouts.map((c) => (
+                      <tr key={c.id} className="hover:bg-neutral-50 transition-colors">
+                        <td className="py-2.5 px-3 font-semibold text-neutral-900">
+                          {c.equipment?.name || 'Equipment'}{' '}
+                          <span className="font-mono text-neutral-500 font-normal">
+                            ({c.equipment?.serial_number})
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3">
+                          <span className="font-medium text-neutral-900">
+                            {c.user?.full_name || 'User'}
+                          </span>{' '}
+                          <span className="font-mono text-neutral-500">
+                            ({c.user?.register_number})
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3">
+                          <span
+                            className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] uppercase font-bold ${
+                              c.status === 'active'
+                                ? 'bg-emerald-700 text-white'
+                                : c.status === 'pending_return'
+                                ? 'bg-amber-600 text-white'
+                                : c.status === 'returned'
+                                ? 'bg-neutral-700 text-white'
+                                : 'bg-neutral-900 text-white'
+                            }`}
+                          >
+                            {c.status}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3 text-neutral-600 font-mono text-[11px]">
+                          {c.checkout_time ? new Date(c.checkout_time).toLocaleDateString() : '—'}
+                        </td>
+                        <td className="py-2.5 px-3 text-neutral-600 font-mono text-[11px]">
+                          {c.actual_return_time ? new Date(c.actual_return_time).toLocaleDateString() : '—'}
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>

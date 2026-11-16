@@ -4,7 +4,7 @@ export type UserStatus = 'pending' | 'approved' | 'rejected';
 
 export type EquipmentStatus = 'available' | 'checked_out' | 'pending_return' | 'maintenance';
 
-export type CheckoutStatus = 'active' | 'pending_return' | 'returned' | 'rejected';
+export type CheckoutStatus = 'pending' | 'pending_checkout' | 'active' | 'pending_return' | 'returned' | 'rejected';
 
 export interface UserProfile {
   id: string;

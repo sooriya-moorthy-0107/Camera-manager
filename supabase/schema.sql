@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS public.checkout_logs (
     expected_return_time TIMESTAMPTZ,
     actual_return_time TIMESTAMPTZ,
     surrender_requested BOOLEAN NOT NULL DEFAULT FALSE,
-    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'pending_return', 'returned', 'rejected')),
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('pending', 'pending_checkout', 'active', 'pending_return', 'returned', 'rejected')),
     notes TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
@@ -588,3 +588,119 @@ END;
 $$;
 
 GRANT EXECUTE ON FUNCTION public.admin_set_password TO anon, authenticated, service_role;
+
+-- 22. Update Checkout Logs Status Constraint (Adds 'pending' and 'pending_checkout')
+DO $$ BEGIN
+    ALTER TABLE public.checkout_logs DROP CONSTRAINT IF EXISTS checkout_logs_status_check;
+    ALTER TABLE public.checkout_logs ADD CONSTRAINT checkout_logs_status_check 
+        CHECK (status IN ('pending', 'pending_checkout', 'active', 'pending_return', 'returned', 'rejected'));
+EXCEPTION
+    WHEN OTHERS THEN null;
+END $$;
+
+-- 23. Helper: Approve Equipment Checkout Request
+CREATE OR REPLACE FUNCTION public.approve_checkout(
+    p_checkout_id UUID,
+    p_actor_name TEXT DEFAULT 'Organizer',
+    p_actor_regnum TEXT DEFAULT 'REG-ORG-001',
+    p_actor_role public.user_role DEFAULT 'organizer'
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_eq_id UUID;
+    v_gear_name TEXT;
+    v_gear_serial TEXT;
+    v_user_name TEXT;
+    v_user_regnum TEXT;
+BEGIN
+    SELECT equipment_id INTO v_eq_id FROM public.checkout_logs WHERE id = p_checkout_id;
+    IF v_eq_id IS NULL THEN
+        RETURN jsonb_build_object('success', false, 'error', 'Checkout record not found.');
+    END IF;
+
+    SELECT name, serial_number INTO v_gear_name, v_gear_serial FROM public.equipment WHERE id = v_eq_id;
+    SELECT u.full_name, u.register_number INTO v_user_name, v_user_regnum
+    FROM public.checkout_logs c JOIN public.users u ON c.user_id = u.id
+    WHERE c.id = p_checkout_id;
+
+    UPDATE public.checkout_logs
+    SET status = 'active',
+        checkout_time = timezone('utc'::text, now()),
+        notes = trim(replace(COALESCE(notes, ''), '[CHECKOUT_REQUEST]', ''))
+    WHERE id = p_checkout_id;
+
+    UPDATE public.equipment
+    SET status = 'checked_out'
+    WHERE id = v_eq_id;
+
+    INSERT INTO public.activity_logs (actor_name, actor_regnum, actor_role, action, details)
+    VALUES (
+        p_actor_name,
+        p_actor_regnum,
+        p_actor_role,
+        'APPROVE_CHECKOUT',
+        p_actor_name || ' (' || p_actor_regnum || ') approved checkout of ' || v_gear_name || ' (' || v_gear_serial || ') for ' || v_user_name || ' (' || v_user_regnum || ')'
+    );
+
+    RETURN jsonb_build_object('success', true);
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.approve_checkout TO anon, authenticated, service_role;
+
+-- 24. Helper: Reject Equipment Checkout Request
+CREATE OR REPLACE FUNCTION public.reject_checkout(
+    p_checkout_id UUID,
+    p_actor_name TEXT DEFAULT 'Organizer',
+    p_actor_regnum TEXT DEFAULT 'REG-ORG-001',
+    p_actor_role public.user_role DEFAULT 'organizer'
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_eq_id UUID;
+    v_gear_name TEXT;
+    v_gear_serial TEXT;
+    v_user_name TEXT;
+    v_user_regnum TEXT;
+BEGIN
+    SELECT equipment_id INTO v_eq_id FROM public.checkout_logs WHERE id = p_checkout_id;
+    IF v_eq_id IS NULL THEN
+        RETURN jsonb_build_object('success', false, 'error', 'Checkout record not found.');
+    END IF;
+
+    SELECT name, serial_number INTO v_gear_name, v_gear_serial FROM public.equipment WHERE id = v_eq_id;
+    SELECT u.full_name, u.register_number INTO v_user_name, v_user_regnum
+    FROM public.checkout_logs c JOIN public.users u ON c.user_id = u.id
+    WHERE c.id = p_checkout_id;
+
+    UPDATE public.checkout_logs
+    SET status = 'rejected',
+        actual_return_time = timezone('utc'::text, now())
+    WHERE id = p_checkout_id;
+
+    UPDATE public.equipment
+    SET status = 'available'
+    WHERE id = v_eq_id;
+
+    INSERT INTO public.activity_logs (actor_name, actor_regnum, actor_role, action, details)
+    VALUES (
+        p_actor_name,
+        p_actor_regnum,
+        p_actor_role,
+        'REJECT_CHECKOUT',
+        p_actor_name || ' (' || p_actor_regnum || ') rejected checkout request of ' || v_gear_name || ' (' || v_gear_serial || ') for ' || v_user_name || ' (' || v_user_regnum || ')'
+    );
+
+    RETURN jsonb_build_object('success', true);
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.reject_checkout TO anon, authenticated, service_role;

@@ -15,7 +15,9 @@ interface DashboardTableProps {
   onApproveReturn: (checkoutId: string, equipmentId: string) => Promise<void>;
   onRejectReturn: (checkoutId: string, equipmentId: string) => Promise<void>;
   onForceReturn: (checkoutId: string, equipmentId: string) => Promise<void>;
-  onRequestCheckoutDirect?: (equipmentId: string) => Promise<void>;
+  onRequestCheckoutDirect?: (item: Equipment) => void;
+  onApproveCheckout?: (checkoutId: string, equipmentId: string) => Promise<void>;
+  onRejectCheckout?: (checkoutId: string, equipmentId: string) => Promise<void>;
 }
 
 export const DashboardTable: React.FC<DashboardTableProps> = ({
@@ -30,6 +32,8 @@ export const DashboardTable: React.FC<DashboardTableProps> = ({
   onRejectReturn,
   onForceReturn,
   onRequestCheckoutDirect,
+  onApproveCheckout,
+  onRejectCheckout,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -236,17 +240,40 @@ export const DashboardTable: React.FC<DashboardTableProps> = ({
                 const isAssignedToCurrentUser =
                   currentUser && activeLog && activeLog.user_id === currentUser.id;
 
+                const isPendingCheckoutReq = Boolean(
+                  activeLog &&
+                  (activeLog.status === 'pending' ||
+                    activeLog.status === 'pending_checkout' ||
+                    (Boolean(activeLog.notes?.includes('[CHECKOUT_REQUEST]')) &&
+                      activeLog.status !== 'returned' &&
+                      activeLog.status !== 'rejected' &&
+                      !activeLog.surrender_requested))
+                );
+
                 return (
                   <tr key={item.id} className="hover:bg-neutral-50 transition-colors">
                     <td className="py-2.5 px-3 font-medium text-neutral-900">{item.name}</td>
                     <td className="py-2.5 px-3 text-neutral-600">{item.category}</td>
                     <td className="py-2.5 px-3 font-mono text-neutral-800">{item.serial_number}</td>
-                    <td className="py-2.5 px-3">{getStatusBadge(item.status)}</td>
+                    <td className="py-2.5 px-3">
+                      {isPendingCheckoutReq ? (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-amber-600 text-white">
+                          Pending Approval
+                        </span>
+                      ) : (
+                        getStatusBadge(item.status)
+                      )}
+                    </td>
                     <td className="py-2.5 px-3">
                       {activeLog?.user ? (
                         <div>
-                          <div className="font-medium text-neutral-900">
-                            {activeLog.user.full_name}
+                          <div className="font-medium text-neutral-900 flex items-center gap-1.5">
+                            <span>{activeLog.user.full_name}</span>
+                            {isPendingCheckoutReq && (
+                              <span className="text-[9px] uppercase font-bold bg-amber-100 text-amber-900 border border-amber-300 px-1 rounded">
+                                Requested
+                              </span>
+                            )}
                           </div>
                           <div className="text-[11px] font-mono text-neutral-500">
                             {activeLog.user.register_number}
@@ -257,8 +284,32 @@ export const DashboardTable: React.FC<DashboardTableProps> = ({
                       )}
                     </td>
                     <td className="py-2.5 px-3 text-right space-x-1.5 whitespace-nowrap">
-                      {/* Manager Actions */}
-                      {isManager ? (
+                      {/* 1. Pending Checkout Request Actions */}
+                      {isPendingCheckoutReq && activeLog ? (
+                        isManager ? (
+                          <>
+                            <Button
+                              size="sm"
+                              variant="primary"
+                              onClick={() => onApproveCheckout && onApproveCheckout(activeLog.id, item.id)}
+                            >
+                              Approve Checkout
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => onRejectCheckout && onRejectCheckout(activeLog.id, item.id)}
+                            >
+                              Reject
+                            </Button>
+                          </>
+                        ) : (
+                          <span className="text-xs font-semibold text-amber-700 font-mono">
+                            {isAssignedToCurrentUser ? 'Your Request Pending' : 'Requested'}
+                          </span>
+                        )
+                      ) : isManager ? (
+                        /* 2. Normal Manager Actions */
                         <>
                           {item.status === 'available' && (
                             <Button
@@ -300,13 +351,13 @@ export const DashboardTable: React.FC<DashboardTableProps> = ({
                           )}
                         </>
                       ) : (
-                        /* Volunteer / Coordinator Actions */
+                        /* 3. Normal Volunteer Actions */
                         <>
                           {item.status === 'available' && onRequestCheckoutDirect && (
                             <Button
                               size="sm"
                               variant="primary"
-                              onClick={() => onRequestCheckoutDirect(item.id)}
+                              onClick={() => onRequestCheckoutDirect(item)}
                             >
                               Request Checkout
                             </Button>
@@ -326,7 +377,7 @@ export const DashboardTable: React.FC<DashboardTableProps> = ({
 
                           {item.status === 'pending_return' && (
                             <span className="text-xs text-neutral-500 font-medium">
-                              Pending Approval
+                              Pending Return Approval
                             </span>
                           )}
                         </>
