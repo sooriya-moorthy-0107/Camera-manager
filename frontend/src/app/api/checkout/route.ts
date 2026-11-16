@@ -8,6 +8,7 @@ export async function POST(req: NextRequest) {
     const validation = checkoutSchema.safeParse(body);
 
     if (!validation.success) {
+      console.error('[API/checkout POST] Validation failed:', JSON.stringify(validation.error.flatten()));
       return NextResponse.json(
         { error: 'Invalid checkout payload', details: validation.error.flatten().fieldErrors },
         { status: 400 }
@@ -27,10 +28,10 @@ export async function POST(req: NextRequest) {
       .from('equipment')
       .select('id, name, status, serial_number')
       .eq('id', equipment_id)
-      .single();
+      .maybeSingle();
 
     if (gearError || !gear) {
-      return NextResponse.json({ error: 'Equipment not found' }, { status: 404 });
+      return NextResponse.json({ error: `Equipment not found with ID ${equipment_id}` }, { status: 404 });
     }
 
     if (gear.status !== 'available') {
@@ -40,22 +41,53 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 2. Fetch target user
-    const { data: targetUser } = await supabase
+    // 2. Fetch target user with flexible matching (id, auth_id, register_number, email)
+    let targetUser = null;
+    const { data: userById } = await supabase
       .from('users')
       .select('id, full_name, register_number, status')
       .eq('id', user_id)
-      .single();
+      .maybeSingle();
 
-    if (targetUser && targetUser.status === 'pending') {
+    if (userById) {
+      targetUser = userById;
+    } else {
+      const { data: userByOther } = await supabase
+        .from('users')
+        .select('id, full_name, register_number, status')
+        .or(`auth_id.eq.${user_id},register_number.eq.${user_id},email.eq.${user_id}`)
+        .maybeSingle();
+      targetUser = userByOther;
+    }
+
+    if (!targetUser && body.actor_regnum) {
+      const { data: userByReg } = await supabase
+        .from('users')
+        .select('id, full_name, register_number, status')
+        .eq('register_number', body.actor_regnum)
+        .maybeSingle();
+      if (userByReg) {
+        targetUser = userByReg;
+      }
+    }
+
+    if (!targetUser) {
+      return NextResponse.json(
+        { error: 'User profile not found in database. Please ensure your account is registered.' },
+        { status: 404 }
+      );
+    }
+
+    const resolvedUserId = targetUser.id;
+    const targetName = targetUser.full_name || actorName;
+    const targetReg = targetUser.register_number || actorReg;
+
+    if (!isVolunteerRequest && targetUser.status === 'pending') {
       return NextResponse.json(
         { error: `User ${targetUser.full_name} is pending approval and cannot be assigned gear.` },
         { status: 403 }
       );
     }
-
-    const targetName = targetUser?.full_name || actorName;
-    const targetReg = targetUser?.register_number || actorReg;
 
     // 3. Handle Volunteer Checkout Request vs Manager Direct Assignment
     if (isVolunteerRequest) {
@@ -67,7 +99,7 @@ export async function POST(req: NextRequest) {
         .from('checkout_logs')
         .insert({
           equipment_id,
-          user_id,
+          user_id: resolvedUserId,
           expected_return_time: expected_return_time || null,
           notes: requestNotes,
           status: 'pending',
@@ -82,7 +114,7 @@ export async function POST(req: NextRequest) {
           .from('checkout_logs')
           .insert({
             equipment_id,
-            user_id,
+            user_id: resolvedUserId,
             expected_return_time: expected_return_time || null,
             notes: requestNotes,
             status: 'pending_return',
@@ -92,6 +124,7 @@ export async function POST(req: NextRequest) {
           .single();
 
         if (fallbackError) {
+          console.error('[API/checkout POST] Failed to insert fallback checkout request:', fallbackError);
           return NextResponse.json(
             { error: `Failed to create checkout request: ${fallbackError.message}` },
             { status: 500 }
@@ -125,7 +158,7 @@ export async function POST(req: NextRequest) {
       .from('checkout_logs')
       .insert({
         equipment_id,
-        user_id,
+        user_id: resolvedUserId,
         expected_return_time: expected_return_time || null,
         notes: notes || null,
         status: 'active',
@@ -135,6 +168,7 @@ export async function POST(req: NextRequest) {
       .single();
 
     if (logError) {
+      console.error('[API/checkout POST] Failed to create direct assignment log:', logError);
       return NextResponse.json(
         { error: `Failed to create checkout log: ${logError.message}` },
         { status: 500 }
@@ -172,6 +206,7 @@ export async function PATCH(req: NextRequest) {
     const validation = returnRequestSchema.safeParse(body);
 
     if (!validation.success) {
+      console.error('[API/checkout PATCH] Validation failed:', JSON.stringify(validation.error.flatten()));
       return NextResponse.json(
         { error: 'Invalid checkout action payload', details: validation.error.flatten().fieldErrors },
         { status: 400 }

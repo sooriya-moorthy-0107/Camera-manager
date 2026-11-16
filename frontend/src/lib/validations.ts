@@ -14,24 +14,24 @@ export const equipmentSchema = z.object({
     .max(50, 'Serial number must be under 50 characters')
     .regex(/^[A-Za-z0-9-_]+$/, 'Serial number can only contain letters, numbers, hyphens, and underscores')
     .transform((val) => val.toUpperCase()),
-  entered_by: z.string().uuid().optional().nullable(),
+  entered_by: z.string().optional().nullable(),
 });
 
 export type EquipmentFormData = z.infer<typeof equipmentSchema>;
 
 export const checkoutSchema = z.object({
-  equipment_id: z.string().uuid('Invalid equipment ID'),
-  user_id: z.string().uuid('Invalid user ID'),
+  equipment_id: z.string().min(1, 'Equipment ID is required'),
+  user_id: z.string().min(1, 'User ID is required'),
   expected_return_time: z.string().optional().nullable(),
   notes: z.string().max(500, 'Notes must be under 500 characters').optional().nullable(),
-  action: z.enum(['assign_checkout', 'request_checkout']).optional(),
+  action: z.string().optional().nullable(),
 });
 
 export type CheckoutFormData = z.infer<typeof checkoutSchema>;
 
 export const returnRequestSchema = z.object({
-  checkout_id: z.string().uuid('Invalid checkout log ID'),
-  equipment_id: z.string().uuid('Invalid equipment ID'),
+  checkout_id: z.string().min(1, 'Invalid checkout log ID'),
+  equipment_id: z.string().min(1, 'Invalid equipment ID'),
   action: z.enum([
     'request_return',
     'approve_return',
@@ -69,7 +69,7 @@ export const signUpSchema = z.object({
 export type SignUpFormData = z.infer<typeof signUpSchema>;
 
 export const roleAssignmentSchema = z.object({
-  user_id: z.string().uuid('Invalid user ID'),
+  user_id: z.string().min(1, 'Invalid user ID'),
   role: userRoleEnum,
 });
 

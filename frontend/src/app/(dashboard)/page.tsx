@@ -184,7 +184,8 @@ export default function DashboardPage() {
 
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || 'Failed to assign equipment');
+        const errDetails = data.details ? Object.values(data.details).flat().join(', ') : '';
+        throw new Error(errDetails ? `${data.error}: ${errDetails}` : data.error || 'Failed to assign equipment');
       }
 
       showNotification(data.message || 'Equipment successfully assigned and checked out');
@@ -451,7 +452,8 @@ export default function DashboardPage() {
 
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || 'Failed to submit checkout request');
+        const errDetails = data.details ? Object.values(data.details).flat().join(', ') : '';
+        throw new Error(errDetails ? `${data.error}: ${errDetails}` : data.error || 'Failed to submit checkout request');
       }
 
       showNotification('Checkout request submitted. Awaiting Organizer or Manager approval.');
