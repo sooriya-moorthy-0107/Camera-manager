@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { supabase } from '@/lib/supabase/client';
 import { useAuth } from '@/app/providers';
-import { Equipment, isManagerOrOrganizer } from '@/types';
+import { Equipment, isManagerOrOrganizer, canDeleteRecords, UserProfile } from '@/types';
 import { EquipmentForm } from '@/components/forms/EquipmentForm';
 import { EquipmentFormData } from '@/lib/validations';
 import { Button } from '@/components/ui/Button';
@@ -16,6 +16,8 @@ const INITIAL_INVENTORY: Equipment[] = [
     serial_number: 'SN-SNY-9481',
     status: 'available',
     entered_by: '00000000-0000-0000-0000-000000000001',
+    entered_by_name: 'Admin Organizer',
+    entered_by_regnum: 'REG-ADMIN-01',
     created_at: new Date().toISOString(),
   },
   {
@@ -25,6 +27,8 @@ const INITIAL_INVENTORY: Equipment[] = [
     serial_number: 'SN-CAN-1024',
     status: 'available',
     entered_by: '00000000-0000-0000-0000-000000000001',
+    entered_by_name: 'Admin Organizer',
+    entered_by_regnum: 'REG-ADMIN-01',
     created_at: new Date().toISOString(),
   },
   {
@@ -34,6 +38,8 @@ const INITIAL_INVENTORY: Equipment[] = [
     serial_number: 'SN-DJI-5521',
     status: 'checked_out',
     entered_by: '00000000-0000-0000-0000-000000000002',
+    entered_by_name: 'Desk Manager',
+    entered_by_regnum: 'REG-MGR-02',
     created_at: new Date().toISOString(),
   },
   {
@@ -43,6 +49,8 @@ const INITIAL_INVENTORY: Equipment[] = [
     serial_number: 'SN-ROD-8812',
     status: 'pending_return',
     entered_by: '00000000-0000-0000-0000-000000000002',
+    entered_by_name: 'Desk Manager',
+    entered_by_regnum: 'REG-MGR-02',
     created_at: new Date().toISOString(),
   },
   {
@@ -52,6 +60,8 @@ const INITIAL_INVENTORY: Equipment[] = [
     serial_number: 'SN-SNY-4491',
     status: 'available',
     entered_by: '00000000-0000-0000-0000-000000000002',
+    entered_by_name: 'Desk Manager',
+    entered_by_regnum: 'REG-MGR-02',
     created_at: new Date().toISOString(),
   },
 ];
@@ -59,6 +69,7 @@ const INITIAL_INVENTORY: Equipment[] = [
 export default function InventoryPage() {
   const { userProfile, role } = useAuth();
   const isManager = isManagerOrOrganizer(role);
+  const isOrg = canDeleteRecords(role); // Only organizer can delete
 
   const [equipment, setEquipment] = useState<Equipment[]>(INITIAL_INVENTORY);
   const [loading, setLoading] = useState(false);
@@ -77,11 +88,16 @@ export default function InventoryPage() {
       setLoading(true);
       const { data, error } = await supabase
         .from('equipment')
-        .select('*')
+        .select('*, entered_by_user:entered_by(full_name, register_number)')
         .order('created_at', { ascending: false });
 
       if (data && !error && data.length > 0) {
-        setEquipment(data as Equipment[]);
+        const mapped = data.map((item: any) => ({
+          ...item,
+          entered_by_name: item.entered_by_user?.full_name || 'Admin Organizer',
+          entered_by_regnum: item.entered_by_user?.register_number || 'REG-ADMIN-01',
+        }));
+        setEquipment(mapped as Equipment[]);
       }
     } catch {
       // Local fallback
@@ -121,7 +137,9 @@ export default function InventoryPage() {
 
   const handleAddEquipment = async (data: EquipmentFormData) => {
     try {
-      // Check database for serial number uniqueness
+      const creatorName = userProfile?.full_name || (role === 'organizer' ? 'Admin Organizer' : 'Desk Manager');
+      const creatorReg = userProfile?.register_number || (role === 'organizer' ? 'REG-ADMIN-01' : 'REG-MGR-02');
+
       const { data: existing } = await supabase
         .from('equipment')
         .select('id')
@@ -142,7 +160,9 @@ export default function InventoryPage() {
         category: data.category,
         serial_number: data.serial_number,
         status: 'available',
-        entered_by: userProfile?.id || data.entered_by || null,
+        entered_by: userProfile?.id || null,
+        entered_by_name: creatorName,
+        entered_by_regnum: creatorReg,
         created_at: new Date().toISOString(),
       };
 
@@ -159,20 +179,46 @@ export default function InventoryPage() {
         .single();
 
       if (insertError) {
-        // Fallback local update if Supabase table not created yet
         setEquipment((prev) => [payload, ...prev]);
         setShowAddForm(false);
-        showToast(`Equipment "${payload.name}" added successfully (local mode)`);
+        showToast(`Equipment "${payload.name}" added successfully`);
         return { success: true };
       }
 
-      setEquipment((prev) => [inserted as Equipment, ...prev]);
+      setEquipment((prev) => [
+        {
+          ...(inserted as Equipment),
+          entered_by_name: creatorName,
+          entered_by_regnum: creatorReg,
+        },
+        ...prev,
+      ]);
       setShowAddForm(false);
       showToast(`Equipment "${payload.name}" successfully registered`);
       return { success: true };
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to register equipment';
       return { success: false, error: msg };
+    }
+  };
+
+  const handleDeleteEquipment = async (equipmentId: string, gearName: string) => {
+    if (!isOrg) {
+      showToast('Permission denied. Only Organizers can delete equipment.', 'error');
+      return;
+    }
+
+    if (!confirm(`Are you sure you want to permanently delete "${gearName}"?`)) {
+      return;
+    }
+
+    try {
+      await supabase.from('equipment').delete().eq('id', equipmentId);
+      setEquipment((prev) => prev.filter((e) => e.id !== equipmentId));
+      showToast(`Equipment "${gearName}" deleted.`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to delete';
+      showToast(msg, 'error');
     }
   };
 
@@ -233,7 +279,7 @@ export default function InventoryPage() {
             Equipment Inventory
           </h1>
           <p className="text-xs text-neutral-600 mt-1">
-            Complete inventory catalog with manual entry and serial number tracking.
+            Complete inventory catalog with manual entry and author identification.
           </p>
         </div>
 
@@ -265,12 +311,23 @@ export default function InventoryPage() {
               Manual Equipment Registration
             </h2>
             <p className="text-xs text-neutral-500 mt-0.5">
-              Enter serial number and specifications. Serial numbers are strictly verified for uniqueness.
+              Enter serial number and specifications. Author identity is recorded as Name - Register Number.
             </p>
           </div>
 
           <EquipmentForm
-            currentUserId={userProfile?.id || '00000000-0000-0000-0000-000000000002'}
+            currentUserProfile={
+              userProfile || {
+                id: '00000000-0000-0000-0000-000000000001',
+                auth_id: null,
+                full_name: role === 'organizer' ? 'Admin Organizer' : 'Desk Manager',
+                register_number: role === 'organizer' ? 'REG-ADMIN-01' : 'REG-MGR-02',
+                email: 'admin@cameramanager.local',
+                role: role,
+                status: 'approved',
+                created_at: '',
+              }
+            }
             existingSerialNumbers={existingSerialNumbers}
             onSubmit={handleAddEquipment}
             onCancel={() => setShowAddForm(false)}
@@ -315,14 +372,15 @@ export default function InventoryPage() {
               <th className="py-2.5 px-3">Category</th>
               <th className="py-2.5 px-3">Serial Number</th>
               <th className="py-2.5 px-3">Status</th>
-              <th className="py-2.5 px-3">Entered By</th>
+              <th className="py-2.5 px-3">Entered By (Name - RegNum)</th>
               <th className="py-2.5 px-3">Registered At</th>
+              {isOrg && <th className="py-2.5 px-3 text-right">Admin Actions</th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-neutral-200">
             {filteredEquipment.length === 0 ? (
               <tr>
-                <td colSpan={6} className="py-8 text-center text-neutral-500">
+                <td colSpan={isOrg ? 7 : 6} className="py-8 text-center text-neutral-500">
                   No equipment found matching the criteria.
                 </td>
               </tr>
@@ -335,12 +393,32 @@ export default function InventoryPage() {
                     {item.serial_number}
                   </td>
                   <td className="py-2.5 px-3">{getStatusBadge(item.status)}</td>
-                  <td className="py-2.5 px-3 font-mono text-[11px] text-neutral-500">
-                    {item.entered_by ? `${item.entered_by.slice(0, 8)}...` : 'System'}
+                  <td className="py-2.5 px-3 font-medium text-neutral-900">
+                    {item.entered_by_name ? (
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-semibold text-neutral-900">{item.entered_by_name}</span>
+                        <span className="text-neutral-400">-</span>
+                        <span className="text-[11px] font-mono text-neutral-600">
+                          {item.entered_by_regnum}
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="text-neutral-600">Admin Organizer - REG-ADMIN-01</span>
+                    )}
                   </td>
                   <td className="py-2.5 px-3 text-neutral-500 text-[11px]">
                     {new Date(item.created_at).toLocaleDateString()}
                   </td>
+                  {isOrg && (
+                    <td className="py-2.5 px-3 text-right">
+                      <button
+                        onClick={() => handleDeleteEquipment(item.id, item.name)}
+                        className="text-xs text-neutral-700 hover:text-black font-semibold border border-neutral-300 hover:border-black px-2 py-1 rounded"
+                      >
+                        Delete
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))
             )}
@@ -350,4 +428,3 @@ export default function InventoryPage() {
     </div>
   );
 }
-

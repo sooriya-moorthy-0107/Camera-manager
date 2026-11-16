@@ -4,7 +4,7 @@ import React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAuth } from '@/app/providers';
-import { isManagerOrOrganizer, UserRole } from '@/types';
+import { isManagerOrOrganizer } from '@/types';
 
 export default function DashboardLayout({
   children,
@@ -12,7 +12,7 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
-  const { user, userProfile, role, signOut, switchMockRole } = useAuth();
+  const { user, userProfile, role, signOut } = useAuth();
   const isManager = isManagerOrOrganizer(role);
 
   const navLinks = [
@@ -60,19 +60,12 @@ export default function DashboardLayout({
 
             {/* User Info & Actions */}
             <div className="flex items-center gap-3">
-              {/* Role Indicator / Simulator */}
+              {/* Static Role Badge (No dropdown) */}
               <div className="flex items-center gap-1.5 text-xs bg-neutral-100 border border-neutral-300 rounded px-2.5 py-1">
                 <span className="text-neutral-500 uppercase tracking-wider text-[10px]">Role:</span>
-                <select
-                  value={role}
-                  onChange={(e) => switchMockRole(e.target.value as UserRole)}
-                  className="bg-transparent font-semibold text-xs text-neutral-900 focus:outline-none cursor-pointer uppercase"
-                >
-                  <option value="organizer">Organizer</option>
-                  <option value="manager">Manager</option>
-                  <option value="coordinator">Coordinator</option>
-                  <option value="volunteer">Volunteer</option>
-                </select>
+                <span className="font-bold text-xs text-neutral-900 uppercase font-mono tracking-wider">
+                  {role}
+                </span>
               </div>
 
               {/* Current User Identity */}
@@ -144,4 +137,3 @@ export default function DashboardLayout({
     </div>
   );
 }
-

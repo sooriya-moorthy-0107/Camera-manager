@@ -17,6 +17,7 @@ const DEFAULT_USERS: UserProfile[] = [
     register_number: 'REG-ADMIN-01',
     email: 'organizer@cameramanager.local',
     role: 'organizer',
+    status: 'approved',
     created_at: new Date().toISOString(),
   },
   {
@@ -26,6 +27,7 @@ const DEFAULT_USERS: UserProfile[] = [
     register_number: 'REG-MGR-02',
     email: 'manager@cameramanager.local',
     role: 'manager',
+    status: 'approved',
     created_at: new Date().toISOString(),
   },
   {
@@ -35,6 +37,7 @@ const DEFAULT_USERS: UserProfile[] = [
     register_number: 'REG-COORD-03',
     email: 'priya@cameramanager.local',
     role: 'coordinator',
+    status: 'approved',
     created_at: new Date().toISOString(),
   },
   {
@@ -44,6 +47,7 @@ const DEFAULT_USERS: UserProfile[] = [
     register_number: 'REG-VOL-04',
     email: 'rahul@cameramanager.local',
     role: 'volunteer',
+    status: 'approved',
     created_at: new Date().toISOString(),
   },
 ];
@@ -56,6 +60,8 @@ const DEFAULT_EQUIPMENT: Equipment[] = [
     serial_number: 'SN-SNY-9481',
     status: 'available',
     entered_by: '00000000-0000-0000-0000-000000000001',
+    entered_by_name: 'Admin Organizer',
+    entered_by_regnum: 'REG-ADMIN-01',
     created_at: new Date().toISOString(),
   },
   {
@@ -65,6 +71,8 @@ const DEFAULT_EQUIPMENT: Equipment[] = [
     serial_number: 'SN-CAN-1024',
     status: 'available',
     entered_by: '00000000-0000-0000-0000-000000000001',
+    entered_by_name: 'Admin Organizer',
+    entered_by_regnum: 'REG-ADMIN-01',
     created_at: new Date().toISOString(),
   },
   {
@@ -74,6 +82,8 @@ const DEFAULT_EQUIPMENT: Equipment[] = [
     serial_number: 'SN-DJI-5521',
     status: 'checked_out',
     entered_by: '00000000-0000-0000-0000-000000000002',
+    entered_by_name: 'Desk Manager',
+    entered_by_regnum: 'REG-MGR-02',
     created_at: new Date().toISOString(),
   },
   {
@@ -83,6 +93,8 @@ const DEFAULT_EQUIPMENT: Equipment[] = [
     serial_number: 'SN-ROD-8812',
     status: 'pending_return',
     entered_by: '00000000-0000-0000-0000-000000000002',
+    entered_by_name: 'Desk Manager',
+    entered_by_regnum: 'REG-MGR-02',
     created_at: new Date().toISOString(),
   },
   {
@@ -92,6 +104,8 @@ const DEFAULT_EQUIPMENT: Equipment[] = [
     serial_number: 'SN-SNY-4491',
     status: 'available',
     entered_by: '00000000-0000-0000-0000-000000000002',
+    entered_by_name: 'Desk Manager',
+    entered_by_regnum: 'REG-MGR-02',
     created_at: new Date().toISOString(),
   },
 ];
@@ -128,7 +142,7 @@ const DEFAULT_CHECKOUTS: CheckoutLog[] = [
 ];
 
 export default function DashboardPage() {
-  const { userProfile, role } = useAuth();
+  const { userProfile, role, status } = useAuth();
   const isManager = isManagerOrOrganizer(role);
 
   const [equipment, setEquipment] = useState<Equipment[]>(DEFAULT_EQUIPMENT);
@@ -145,19 +159,16 @@ export default function DashboardPage() {
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
-      // Fetch equipment
       const { data: eqData } = await supabase.from('equipment').select('*').order('name');
       if (eqData && eqData.length > 0) {
         setEquipment(eqData as Equipment[]);
       }
 
-      // Fetch users
       const { data: uData } = await supabase.from('users').select('*').order('full_name');
       if (uData && uData.length > 0) {
         setUsers(uData as UserProfile[]);
       }
 
-      // Fetch active checkouts with joins
       const { data: coData } = await supabase
         .from('checkout_logs')
         .select('*, equipment:equipment_id(*), user:user_id(*)')
@@ -183,7 +194,11 @@ export default function DashboardPage() {
   const checkedOutCount = equipment.filter((e) => e.status === 'checked_out').length;
   const pendingReturnCount = equipment.filter((e) => e.status === 'pending_return').length;
 
-  // Actions
+  // Actor identification helpers
+  const currentActorName = userProfile?.full_name || (role === 'organizer' ? 'Admin Organizer' : 'Desk Manager');
+  const currentActorReg = userProfile?.register_number || (role === 'organizer' ? 'REG-ADMIN-01' : 'REG-MGR-02');
+
+  // Actions with human-readable logging integration
   const handleAssignCheckout = async (equipmentId: string, targetUserId: string, notes?: string) => {
     try {
       const res = await fetch('/api/checkout', {
@@ -193,6 +208,9 @@ export default function DashboardPage() {
           equipment_id: equipmentId,
           user_id: targetUserId,
           notes,
+          actor_name: currentActorName,
+          actor_regnum: currentActorReg,
+          actor_role: role,
         }),
       });
 
@@ -201,10 +219,9 @@ export default function DashboardPage() {
         throw new Error(data.error || 'Failed to assign equipment');
       }
 
-      showNotification('Equipment successfully assigned and checked out');
+      showNotification(data.message || 'Equipment successfully assigned and checked out');
       await loadData();
     } catch (err: unknown) {
-      // Fallback local update if API/DB not reachable
       const targetUser = users.find((u) => u.id === targetUserId);
       const targetItem = equipment.find((e) => e.id === equipmentId);
 
@@ -227,7 +244,7 @@ export default function DashboardPage() {
           user: targetUser,
         };
         setCheckouts((prev) => [newLog, ...prev]);
-        showNotification('Equipment assigned successfully');
+        showNotification(`${currentActorName} assigned ${targetItem.name} to ${targetUser.full_name}`);
       } else {
         const msg = err instanceof Error ? err.message : 'Error assigning equipment';
         showNotification(msg, 'error');
@@ -244,16 +261,18 @@ export default function DashboardPage() {
           checkout_id: checkoutId,
           equipment_id: equipmentId,
           action: 'request_return',
+          actor_name: currentActorName,
+          actor_regnum: currentActorReg,
+          actor_role: role,
         }),
       });
 
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to request return');
 
-      showNotification('Return request submitted. Awaiting manager approval.');
+      showNotification(data.message || 'Return request submitted. Awaiting manager approval.');
       await loadData();
     } catch {
-      // Local fallback
       setEquipment((prev) =>
         prev.map((e) => (e.id === equipmentId ? { ...e, status: 'pending_return' } : e))
       );
@@ -275,16 +294,18 @@ export default function DashboardPage() {
           checkout_id: checkoutId,
           equipment_id: equipmentId,
           action: 'approve_return',
+          actor_name: currentActorName,
+          actor_regnum: currentActorReg,
+          actor_role: role,
         }),
       });
 
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to approve return');
 
-      showNotification('Equipment return approved. Item is now Available.');
+      showNotification(data.message || 'Equipment return approved. Item is now Available.');
       await loadData();
     } catch {
-      // Local fallback
       setEquipment((prev) =>
         prev.map((e) => (e.id === equipmentId ? { ...e, status: 'available' } : e))
       );
@@ -308,16 +329,18 @@ export default function DashboardPage() {
           checkout_id: checkoutId,
           equipment_id: equipmentId,
           action: 'reject_return',
+          actor_name: currentActorName,
+          actor_regnum: currentActorReg,
+          actor_role: role,
         }),
       });
 
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to reject return');
 
-      showNotification('Return request rejected. Item remains checked out.');
+      showNotification(data.message || 'Return request rejected. Item remains checked out.');
       await loadData();
     } catch {
-      // Local fallback
       setEquipment((prev) =>
         prev.map((e) => (e.id === equipmentId ? { ...e, status: 'checked_out' } : e))
       );
@@ -339,16 +362,18 @@ export default function DashboardPage() {
           checkout_id: checkoutId,
           equipment_id: equipmentId,
           action: 'force_return',
+          actor_name: currentActorName,
+          actor_regnum: currentActorReg,
+          actor_role: role,
         }),
       });
 
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to force return');
 
-      showNotification('Equipment force-returned successfully.');
+      showNotification(data.message || 'Equipment force-returned successfully.');
       await loadData();
     } catch {
-      // Local fallback
       setEquipment((prev) =>
         prev.map((e) => (e.id === equipmentId ? { ...e, status: 'available' } : e))
       );
@@ -364,7 +389,11 @@ export default function DashboardPage() {
   };
 
   const handleRequestCheckoutDirect = async (equipmentId: string) => {
-    const activeUserId = userProfile?.id || users[3]?.id; // Default to volunteer
+    if (status === 'pending') {
+      showNotification('Your account is pending approval by an Organizer or Manager.', 'error');
+      return;
+    }
+    const activeUserId = userProfile?.id || users[3]?.id;
     await handleAssignCheckout(equipmentId, activeUserId, 'Volunteer self-checkout request');
   };
 
@@ -380,6 +409,19 @@ export default function DashboardPage() {
           }`}
         >
           {notification.message}
+        </div>
+      )}
+
+      {/* Account Pending Approval Banner */}
+      {status === 'pending' && (
+        <div className="bg-white border-2 border-amber-600 rounded p-4 text-xs space-y-1">
+          <div className="font-bold uppercase tracking-wider text-amber-900">
+            Account Pending Approval
+          </div>
+          <p className="text-neutral-700">
+            Your account is waiting to be approved by an <strong>Organizer</strong> or <strong>Manager</strong>.
+            Until approved, equipment checkouts cannot be assigned to you.
+          </p>
         </div>
       )}
 
@@ -463,14 +505,14 @@ export default function DashboardPage() {
             Gear Status & Checkout Table
           </h2>
           <span className="text-[11px] text-neutral-500 font-mono">
-            Active Role: {role.toUpperCase()}
+            Active Role: <strong className="uppercase text-neutral-900">{role}</strong>
           </span>
         </div>
 
         <DashboardTable
           equipment={equipment}
           checkouts={checkouts}
-          users={users}
+          users={users.filter((u) => u.status === 'approved')}
           currentUser={userProfile}
           currentRole={role}
           onAssignCheckout={handleAssignCheckout}
@@ -484,4 +526,3 @@ export default function DashboardPage() {
     </div>
   );
 }
-

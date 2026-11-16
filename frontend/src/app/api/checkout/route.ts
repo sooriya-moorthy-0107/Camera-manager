@@ -15,9 +15,13 @@ export async function POST(req: NextRequest) {
     }
 
     const { equipment_id, user_id, expected_return_time, notes } = validation.data;
+    const actorName = body.actor_name || 'Admin Organizer';
+    const actorReg = body.actor_regnum || 'REG-ADMIN-01';
+    const actorRole = body.actor_role || 'organizer';
+
     const supabase = createServerClient();
 
-    // 1. Verify equipment status - prevent duplicate checkout requests for already checked-out gear
+    // 1. Verify equipment status
     const { data: gear, error: gearError } = await supabase
       .from('equipment')
       .select('id, name, status, serial_number')
@@ -35,17 +39,17 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 2. Check if there is an active checkout log without return
-    const { data: activeLogs } = await supabase
-      .from('checkout_logs')
-      .select('id')
-      .eq('equipment_id', equipment_id)
-      .is('actual_return_time', null);
+    // 2. Fetch target user
+    const { data: targetUser } = await supabase
+      .from('users')
+      .select('id, full_name, register_number, status')
+      .eq('id', user_id)
+      .single();
 
-    if (activeLogs && activeLogs.length > 0) {
+    if (targetUser && targetUser.status === 'pending') {
       return NextResponse.json(
-        { error: 'Equipment currently has an active open checkout record' },
-        { status: 409 }
+        { error: `User ${targetUser.full_name} is pending approval and cannot be assigned gear.` },
+        { status: 403 }
       );
     }
 
@@ -70,22 +74,25 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 4. Update equipment status to checked_out
-    const { error: updateGearError } = await supabase
-      .from('equipment')
-      .update({ status: 'checked_out' })
-      .eq('id', equipment_id);
+    // 4. Update equipment status
+    await supabase.from('equipment').update({ status: 'checked_out' }).eq('id', equipment_id);
 
-    if (updateGearError) {
-      return NextResponse.json(
-        { error: `Failed to update equipment status: ${updateGearError.message}` },
-        { status: 500 }
-      );
-    }
+    // 5. Log human-readable transaction
+    const targetName = targetUser?.full_name || 'User';
+    const targetReg = targetUser?.register_number || 'REG';
+    const logSentence = `${actorName} (${actorReg}) assigned ${gear.name} (${gear.serial_number}) to ${targetName} (${targetReg})`;
+
+    await supabase.from('activity_logs').insert({
+      actor_name: actorName,
+      actor_regnum: actorReg,
+      actor_role: actorRole,
+      action: 'ASSIGN_EQUIPMENT',
+      details: logSentence,
+    });
 
     return NextResponse.json({
       success: true,
-      message: `Equipment ${gear.name} successfully assigned`,
+      message: logSentence,
       checkout: newLog,
     });
   } catch (err: unknown) {
@@ -107,11 +114,32 @@ export async function PATCH(req: NextRequest) {
     }
 
     const { checkout_id, equipment_id, action, notes } = validation.data;
+    const actorName = body.actor_name || 'Manager';
+    const actorReg = body.actor_regnum || 'REG-MGR-02';
+    const actorRole = body.actor_role || 'manager';
+
     const supabase = createServerClient();
 
+    // Fetch equipment and user context
+    const { data: gear } = await supabase
+      .from('equipment')
+      .select('name, serial_number')
+      .eq('id', equipment_id)
+      .single();
+
+    const { data: logEntry } = await supabase
+      .from('checkout_logs')
+      .select('*, user:user_id(full_name, register_number)')
+      .eq('id', checkout_id)
+      .single();
+
+    const gearLabel = gear ? `${gear.name} (${gear.serial_number})` : 'equipment';
+    const userLabel = logEntry?.user
+      ? `${logEntry.user.full_name} (${logEntry.user.register_number})`
+      : 'holder';
+
     if (action === 'request_return') {
-      // Volunteer initiates return: changes status to pending_return
-      const { error: logErr } = await supabase
+      await supabase
         .from('checkout_logs')
         .update({
           surrender_requested: true,
@@ -120,23 +148,24 @@ export async function PATCH(req: NextRequest) {
         })
         .eq('id', checkout_id);
 
-      if (logErr) {
-        return NextResponse.json({ error: logErr.message }, { status: 500 });
-      }
+      await supabase.from('equipment').update({ status: 'pending_return' }).eq('id', equipment_id);
 
-      await supabase
-        .from('equipment')
-        .update({ status: 'pending_return' })
-        .eq('id', equipment_id);
+      const logSentence = `${actorName} (${actorReg}) requested equipment return for ${gearLabel}`;
+      await supabase.from('activity_logs').insert({
+        actor_name: actorName,
+        actor_regnum: actorReg,
+        actor_role: actorRole,
+        action: 'REQUEST_RETURN',
+        details: logSentence,
+      });
 
-      return NextResponse.json({ success: true, status: 'pending_return' });
+      return NextResponse.json({ success: true, status: 'pending_return', message: logSentence });
     }
 
-    if (action === 'approve_return' || action === 'force_return') {
-      // Manager approves return or forces return: finalizes equipment availability
+    if (action === 'approve_return') {
       const returnTimestamp = new Date().toISOString();
 
-      const { error: logErr } = await supabase
+      await supabase
         .from('checkout_logs')
         .update({
           actual_return_time: returnTimestamp,
@@ -146,21 +175,22 @@ export async function PATCH(req: NextRequest) {
         })
         .eq('id', checkout_id);
 
-      if (logErr) {
-        return NextResponse.json({ error: logErr.message }, { status: 500 });
-      }
+      await supabase.from('equipment').update({ status: 'available' }).eq('id', equipment_id);
 
-      await supabase
-        .from('equipment')
-        .update({ status: 'available' })
-        .eq('id', equipment_id);
+      const logSentence = `${actorName} (${actorReg}) approved return of ${gearLabel} from ${userLabel}`;
+      await supabase.from('activity_logs').insert({
+        actor_name: actorName,
+        actor_regnum: actorReg,
+        actor_role: actorRole,
+        action: 'APPROVE_RETURN',
+        details: logSentence,
+      });
 
-      return NextResponse.json({ success: true, status: 'available' });
+      return NextResponse.json({ success: true, status: 'available', message: logSentence });
     }
 
     if (action === 'reject_return') {
-      // Manager rejects return request: item stays checked out
-      const { error: logErr } = await supabase
+      await supabase
         .from('checkout_logs')
         .update({
           surrender_requested: false,
@@ -169,16 +199,45 @@ export async function PATCH(req: NextRequest) {
         })
         .eq('id', checkout_id);
 
-      if (logErr) {
-        return NextResponse.json({ error: logErr.message }, { status: 500 });
-      }
+      await supabase.from('equipment').update({ status: 'checked_out' }).eq('id', equipment_id);
+
+      const logSentence = `${actorName} (${actorReg}) rejected return request for ${gearLabel} from ${userLabel}`;
+      await supabase.from('activity_logs').insert({
+        actor_name: actorName,
+        actor_regnum: actorReg,
+        actor_role: actorRole,
+        action: 'REJECT_RETURN',
+        details: logSentence,
+      });
+
+      return NextResponse.json({ success: true, status: 'checked_out', message: logSentence });
+    }
+
+    if (action === 'force_return') {
+      const returnTimestamp = new Date().toISOString();
 
       await supabase
-        .from('equipment')
-        .update({ status: 'checked_out' })
-        .eq('id', equipment_id);
+        .from('checkout_logs')
+        .update({
+          actual_return_time: returnTimestamp,
+          status: 'returned',
+          surrender_requested: false,
+          ...(notes ? { notes } : {}),
+        })
+        .eq('id', checkout_id);
 
-      return NextResponse.json({ success: true, status: 'checked_out' });
+      await supabase.from('equipment').update({ status: 'available' }).eq('id', equipment_id);
+
+      const logSentence = `${actorName} (${actorReg}) force-returned ${gearLabel} from ${userLabel}`;
+      await supabase.from('activity_logs').insert({
+        actor_name: actorName,
+        actor_regnum: actorReg,
+        actor_role: actorRole,
+        action: 'FORCE_RETURN',
+        details: logSentence,
+      });
+
+      return NextResponse.json({ success: true, status: 'available', message: logSentence });
     }
 
     return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
@@ -187,4 +246,3 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
-

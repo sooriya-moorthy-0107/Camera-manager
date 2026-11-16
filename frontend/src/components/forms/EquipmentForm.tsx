@@ -3,9 +3,10 @@
 import React, { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { equipmentSchema, EquipmentFormData } from '@/lib/validations';
+import { UserProfile } from '@/types';
 
 interface EquipmentFormProps {
-  currentUserId?: string;
+  currentUserProfile?: UserProfile | null;
   existingSerialNumbers?: string[];
   onSubmit: (data: EquipmentFormData) => Promise<{ success: boolean; error?: string }>;
   onCancel?: () => void;
@@ -14,7 +15,7 @@ interface EquipmentFormProps {
 const CATEGORIES = ['Camera', 'Lens', 'Audio', 'Stabilizer', 'Lighting', 'Accessory', 'Other'];
 
 export const EquipmentForm: React.FC<EquipmentFormProps> = ({
-  currentUserId,
+  currentUserProfile,
   existingSerialNumbers = [],
   onSubmit,
   onCancel,
@@ -23,12 +24,16 @@ export const EquipmentForm: React.FC<EquipmentFormProps> = ({
     name: '',
     category: 'Camera',
     serial_number: '',
-    entered_by: currentUserId || null,
+    entered_by: currentUserProfile?.id || null,
   });
 
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [serverError, setServerError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const enteredByDisplay = currentUserProfile
+    ? `${currentUserProfile.full_name} - ${currentUserProfile.register_number}`
+    : 'Admin Organizer - REG-ADMIN-01';
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
@@ -51,7 +56,7 @@ export const EquipmentForm: React.FC<EquipmentFormProps> = ({
 
     const validation = equipmentSchema.safeParse({
       ...formData,
-      entered_by: currentUserId || null,
+      entered_by: currentUserProfile?.id || null,
     });
 
     if (!validation.success) {
@@ -87,7 +92,7 @@ export const EquipmentForm: React.FC<EquipmentFormProps> = ({
           name: '',
           category: 'Camera',
           serial_number: '',
-          entered_by: currentUserId || null,
+          entered_by: currentUserProfile?.id || null,
         });
         setErrors({});
       }
@@ -116,7 +121,7 @@ export const EquipmentForm: React.FC<EquipmentFormProps> = ({
           name="name"
           value={formData.name}
           onChange={handleChange}
-          placeholder="e.g. Sony Alpha A7 IV"
+          placeholder="e.g. Sony Alpha A7 IV (Body)"
           className="w-full px-3 py-2 text-sm bg-white border border-neutral-300 rounded focus:outline-none focus:border-black"
         />
         {errors.name && <p className="mt-1 text-xs text-neutral-900 font-medium">{errors.name}</p>}
@@ -153,7 +158,7 @@ export const EquipmentForm: React.FC<EquipmentFormProps> = ({
           value={formData.serial_number}
           onChange={handleChange}
           placeholder="e.g. SN-SNY-9481"
-          className="w-full px-3 py-2 text-sm uppercase bg-white border border-neutral-300 rounded focus:outline-none focus:border-black"
+          className="w-full px-3 py-2 text-sm uppercase bg-white border border-neutral-300 rounded focus:outline-none focus:border-black font-mono"
         />
         {errors.serial_number && (
           <p className="mt-1 text-xs text-neutral-900 font-medium">{errors.serial_number}</p>
@@ -161,8 +166,11 @@ export const EquipmentForm: React.FC<EquipmentFormProps> = ({
       </div>
 
       <div className="pt-2 border-t border-neutral-200">
-        <div className="text-xs text-neutral-500 mb-3">
-          Entered By: <span className="font-mono text-neutral-800">{currentUserId || 'Current User'}</span>
+        <div className="text-xs text-neutral-600 mb-3">
+          Entered By:{' '}
+          <span className="font-semibold text-neutral-900 bg-neutral-100 px-2 py-0.5 rounded border border-neutral-300">
+            {enteredByDisplay}
+          </span>
         </div>
 
         <div className="flex items-center justify-end gap-2">
@@ -179,4 +187,3 @@ export const EquipmentForm: React.FC<EquipmentFormProps> = ({
     </form>
   );
 };
-

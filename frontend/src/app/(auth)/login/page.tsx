@@ -20,11 +20,13 @@ export default function LoginPage() {
 
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [authError, setAuthError] = useState<string | null>(null);
+  const [signupSuccessNotice, setSignupSuccessNotice] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError(null);
+    setSignupSuccessNotice(null);
     setErrors({});
 
     if (mode === 'signin') {
@@ -72,7 +74,10 @@ export default function LoginPage() {
       if (res.error) {
         setAuthError(res.error);
       } else {
-        router.push('/');
+        setSignupSuccessNotice(
+          'Registration successful! Your account is currently in PENDING APPROVAL status. An Organizer or Manager will review and accept your profile before equipment checkouts are enabled.'
+        );
+        setMode('signin');
       }
     }
   };
@@ -88,7 +93,7 @@ export default function LoginPage() {
           <p className="text-xs text-neutral-600 mt-1">
             {mode === 'signin'
               ? 'Sign in with your email credentials'
-              : 'Create an account with role and register number'}
+              : 'Create an account (subject to Organizer / Manager approval)'}
           </p>
         </div>
 
@@ -122,7 +127,14 @@ export default function LoginPage() {
           </button>
         </div>
 
-        {/* Form Error Banner */}
+        {/* Notices */}
+        {signupSuccessNotice && (
+          <div className="p-3 bg-neutral-100 border-2 border-black text-xs text-neutral-900 rounded font-medium space-y-1">
+            <div className="font-bold uppercase tracking-wider">Approval Required</div>
+            <div>{signupSuccessNotice}</div>
+          </div>
+        )}
+
         {authError && (
           <div className="p-3 bg-neutral-100 border border-neutral-400 text-xs text-neutral-900 rounded font-medium">
             {authError}
@@ -169,7 +181,7 @@ export default function LoginPage() {
 
               <div>
                 <label className="block text-xs font-semibold text-neutral-800 uppercase tracking-wider mb-1">
-                  System Role
+                  Requested Role
                 </label>
                 <select
                   value={role}
@@ -218,7 +230,7 @@ export default function LoginPage() {
           </div>
 
           <Button type="submit" variant="primary" size="md" className="w-full" loading={isSubmitting}>
-            {mode === 'signin' ? 'Sign In' : 'Create Account'}
+            {mode === 'signin' ? 'Sign In' : 'Submit Registration for Approval'}
           </Button>
         </form>
 
@@ -228,11 +240,10 @@ export default function LoginPage() {
             onClick={() => router.push('/')}
             className="text-xs text-neutral-600 hover:text-black underline underline-offset-2"
           >
-            Continue as Guest / View Dashboard
+            Continue to Overview
           </button>
         </div>
       </div>
     </div>
   );
 }
-

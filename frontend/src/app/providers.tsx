@@ -2,19 +2,25 @@
 
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase/client';
-import { UserProfile, UserRole } from '@/types';
+import { UserProfile, UserRole, UserStatus } from '@/types';
 import { User } from '@supabase/supabase-js';
 
 interface AuthContextType {
   user: User | null;
   userProfile: UserProfile | null;
   role: UserRole;
+  status: UserStatus;
   loading: boolean;
-  signIn: (email: string, password: string) => Promise<{ error?: string }>;
-  signUp: (email: string, password: string, fullName: string, registerNumber: string, role?: UserRole) => Promise<{ error?: string }>;
+  signIn: (email: string, password: string) => Promise<{ error?: string; status?: UserStatus }>;
+  signUp: (
+    email: string,
+    password: string,
+    fullName: string,
+    registerNumber: string,
+    role?: UserRole
+  ) => Promise<{ error?: string; isPending?: boolean }>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
-  switchMockRole: (role: UserRole) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -22,7 +28,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
-  const [activeRole, setActiveRole] = useState<UserRole>('manager');
+  const [activeRole, setActiveRole] = useState<UserRole>('organizer');
   const [loading, setLoading] = useState(true);
 
   const fetchProfile = async (authUserId: string, userEmail?: string) => {
@@ -38,7 +44,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setActiveRole(data.role as UserRole);
       }
     } catch {
-      // Fallback or offline
+      // Fallback
     }
   };
 
@@ -47,18 +53,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     async function initAuth() {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
         if (mounted) {
           if (session?.user) {
             setUser(session.user);
             await fetchProfile(session.user.id, session.user.email);
           } else {
-            // Default mock organizer/manager if unauthenticated for quick start
             setUser(null);
           }
         }
       } catch {
-        // Handle init failure gracefully
+        // Fallback
       } finally {
         if (mounted) setLoading(false);
       }
@@ -66,7 +73,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     initAuth();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (_event, session) => {
       if (!mounted) return;
       if (session?.user) {
         setUser(session.user);
@@ -93,7 +102,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(data.user);
       await fetchProfile(data.user.id, data.user.email);
     }
-    return {};
+    return { status: userProfile?.status || 'approved' };
   };
 
   const signUp = async (
@@ -103,6 +112,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     registerNumber: string,
     role: UserRole = 'volunteer'
   ) => {
+    // Attempt Supabase email signup
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
@@ -119,25 +129,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { error: error.message };
     }
 
+    // Insert user record with status 'pending'
+    const newProfile: Partial<UserProfile> = {
+      auth_id: data.user?.id || null,
+      email: data.user?.email || email,
+      full_name: fullName,
+      register_number: registerNumber,
+      role,
+      status: 'pending',
+    };
+
+    await supabase.from('users').upsert(newProfile);
+
+    // Also record transaction into activity_logs
+    await supabase.from('activity_logs').insert({
+      actor_name: fullName,
+      actor_regnum: registerNumber,
+      actor_role: role,
+      action: 'USER_SIGNUP',
+      details: `New user ${fullName} (${registerNumber}) registered with role ${role}. Status is Pending Approval.`,
+    });
+
     if (data.user) {
-      // Create user profile in public.users
-      const { error: profileErr } = await supabase.from('users').upsert({
-        auth_id: data.user.id,
-        email: data.user.email || email,
-        full_name: fullName,
-        register_number: registerNumber,
-        role,
-      });
-
-      if (profileErr) {
-        console.error('Failed to create user profile:', profileErr.message);
-      }
-
       setUser(data.user);
       await fetchProfile(data.user.id, data.user.email);
     }
 
-    return {};
+    return { isPending: true };
   };
 
   const signOut = async () => {
@@ -152,22 +170,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const switchMockRole = (role: UserRole) => {
-    setActiveRole(role);
-  };
-
   return (
     <AuthContext.Provider
       value={{
         user,
         userProfile,
         role: userProfile?.role || activeRole,
+        status: userProfile?.status || 'approved',
         loading,
         signIn,
         signUp,
         signOut,
         refreshProfile,
-        switchMockRole,
       }}
     >
       {children}
@@ -182,4 +196,3 @@ export const useAuth = () => {
   }
   return context;
 };
-
