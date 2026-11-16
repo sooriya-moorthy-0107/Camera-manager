@@ -142,103 +142,45 @@ ALTER TABLE public.equipment ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.checkout_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.activity_logs ENABLE ROW LEVEL SECURITY;
 
--- 9. Users Table RLS Policies (Accessible to authenticated & anon for seamless sync)
-DROP POLICY IF EXISTS "Allow authenticated read of user profiles" ON public.users;
-DROP POLICY IF EXISTS "Allow public read of user profiles" ON public.users;
-CREATE POLICY "Allow public read of user profiles" ON public.users
-    FOR SELECT TO authenticated, anon
-    USING (true);
+-- 9. Clean up any existing policies dynamically on public tables
+DO $$ 
+DECLARE 
+    pol RECORD;
+BEGIN 
+    FOR pol IN (
+        SELECT schemaname, tablename, policyname 
+        FROM pg_policies 
+        WHERE schemaname = 'public' 
+          AND tablename IN ('users', 'equipment', 'checkout_logs', 'activity_logs')
+    ) LOOP
+        EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I', pol.policyname, pol.schemaname, pol.tablename);
+    END LOOP;
+END $$;
 
-DROP POLICY IF EXISTS "Users can insert their own profile or manager can add" ON public.users;
-DROP POLICY IF EXISTS "Allow public insert of user profiles" ON public.users;
-CREATE POLICY "Allow public insert of user profiles" ON public.users
-    FOR INSERT TO authenticated, anon
-    WITH CHECK (true);
+-- 10. Users Table Policies (Accessible to authenticated & anon for seamless sync)
+CREATE POLICY "p_users_select" ON public.users FOR SELECT TO authenticated, anon USING (true);
+CREATE POLICY "p_users_insert" ON public.users FOR INSERT TO authenticated, anon WITH CHECK (true);
+CREATE POLICY "p_users_update" ON public.users FOR UPDATE TO authenticated, anon USING (true) WITH CHECK (true);
+CREATE POLICY "p_users_delete" ON public.users FOR DELETE TO authenticated, anon USING (true);
 
-DROP POLICY IF EXISTS "Managers can update or user update own non-role" ON public.users;
-DROP POLICY IF EXISTS "Allow public update of user profiles" ON public.users;
-CREATE POLICY "Allow public update of user profiles" ON public.users
-    FOR UPDATE TO authenticated, anon
-    USING (true)
-    WITH CHECK (true);
+-- 11. Equipment Table Policies
+CREATE POLICY "p_equipment_select" ON public.equipment FOR SELECT TO authenticated, anon USING (true);
+CREATE POLICY "p_equipment_insert" ON public.equipment FOR INSERT TO authenticated, anon WITH CHECK (true);
+CREATE POLICY "p_equipment_update" ON public.equipment FOR UPDATE TO authenticated, anon USING (true);
+CREATE POLICY "p_equipment_delete" ON public.equipment FOR DELETE TO authenticated, anon USING (true);
 
-DROP POLICY IF EXISTS "Only organizers can delete users" ON public.users;
-DROP POLICY IF EXISTS "Allow delete of user profiles" ON public.users;
-CREATE POLICY "Allow delete of user profiles" ON public.users
-    FOR DELETE TO authenticated, anon
-    USING (true);
+-- 12. Checkout Logs Table Policies
+CREATE POLICY "p_checkout_select" ON public.checkout_logs FOR SELECT TO authenticated, anon USING (true);
+CREATE POLICY "p_checkout_insert" ON public.checkout_logs FOR INSERT TO authenticated, anon WITH CHECK (true);
+CREATE POLICY "p_checkout_update" ON public.checkout_logs FOR UPDATE TO authenticated, anon USING (true) WITH CHECK (true);
+CREATE POLICY "p_checkout_delete" ON public.checkout_logs FOR DELETE TO authenticated, anon USING (true);
 
--- 10. Equipment Table RLS Policies
-DROP POLICY IF EXISTS "Allow authenticated users to read equipment" ON public.equipment;
-DROP POLICY IF EXISTS "Allow public read equipment" ON public.equipment;
-CREATE POLICY "Allow public read equipment" ON public.equipment
-    FOR SELECT TO authenticated, anon
-    USING (true);
+-- 13. Activity Logs Table Policies
+CREATE POLICY "p_activity_select" ON public.activity_logs FOR SELECT TO authenticated, anon USING (true);
+CREATE POLICY "p_activity_insert" ON public.activity_logs FOR INSERT TO authenticated, anon WITH CHECK (true);
+CREATE POLICY "p_activity_delete" ON public.activity_logs FOR DELETE TO authenticated, anon USING (true);
 
-DROP POLICY IF EXISTS "Managers and organizers can insert equipment" ON public.equipment;
-DROP POLICY IF EXISTS "Allow public insert equipment" ON public.equipment;
-CREATE POLICY "Allow public insert equipment" ON public.equipment
-    FOR INSERT TO authenticated, anon
-    WITH CHECK (true);
-
-DROP POLICY IF EXISTS "Managers and organizers can update equipment" ON public.equipment;
-DROP POLICY IF EXISTS "Allow public update equipment" ON public.equipment;
-CREATE POLICY "Allow public update equipment" ON public.equipment
-    FOR UPDATE TO authenticated, anon
-    USING (true);
-
-DROP POLICY IF EXISTS "Only organizers can delete equipment" ON public.equipment;
-DROP POLICY IF EXISTS "Allow delete equipment" ON public.equipment;
-CREATE POLICY "Allow delete equipment" ON public.equipment
-    FOR DELETE TO authenticated, anon
-    USING (true);
-
--- 11. Checkout Logs Table RLS Policies
-DROP POLICY IF EXISTS "Allow authenticated users to view checkout logs" ON public.checkout_logs;
-DROP POLICY IF EXISTS "Allow public read checkout logs" ON public.checkout_logs;
-CREATE POLICY "Allow public read checkout logs" ON public.checkout_logs
-    FOR SELECT TO authenticated, anon
-    USING (true);
-
-DROP POLICY IF EXISTS "Allow checkout creation" ON public.checkout_logs;
-DROP POLICY IF EXISTS "Allow public insert checkout logs" ON public.checkout_logs;
-CREATE POLICY "Allow public insert checkout logs" ON public.checkout_logs
-    FOR INSERT TO authenticated, anon
-    WITH CHECK (true);
-
-DROP POLICY IF EXISTS "Allow checkout updates" ON public.checkout_logs;
-DROP POLICY IF EXISTS "Allow public update checkout logs" ON public.checkout_logs;
-CREATE POLICY "Allow public update checkout logs" ON public.checkout_logs
-    FOR UPDATE TO authenticated, anon
-    USING (true)
-    WITH CHECK (true);
-
-DROP POLICY IF EXISTS "Only organizers can delete checkout logs" ON public.checkout_logs;
-DROP POLICY IF EXISTS "Allow delete checkout logs" ON public.checkout_logs;
-CREATE POLICY "Allow delete checkout logs" ON public.checkout_logs
-    FOR DELETE TO authenticated, anon
-    USING (true);
-
--- 12. Activity Logs Table RLS Policies
-DROP POLICY IF EXISTS "Allow managers and organizers to view activity logs" ON public.activity_logs;
-DROP POLICY IF EXISTS "Allow public view activity logs" ON public.activity_logs;
-CREATE POLICY "Allow public view activity logs" ON public.activity_logs
-    FOR SELECT TO authenticated, anon
-    USING (true);
-
-DROP POLICY IF EXISTS "Allow system to insert activity logs" ON public.activity_logs;
-DROP POLICY IF EXISTS "Allow public insert activity logs" ON public.activity_logs;
-CREATE POLICY "Allow public insert activity logs" ON public.activity_logs
-    FOR INSERT TO authenticated, anon
-    WITH CHECK (true);
-
-DROP POLICY IF EXISTS "Only organizers can delete activity logs" ON public.activity_logs;
-DROP POLICY IF EXISTS "Allow delete activity logs" ON public.activity_logs;
-CREATE POLICY "Allow delete activity logs" ON public.activity_logs
-    FOR DELETE TO authenticated, anon
-    USING (true);
-
--- 13. Automatic Trigger for New Signups from Supabase Auth
+-- 14. Automatic Trigger for New Signups from Supabase Auth
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -308,7 +250,7 @@ CREATE TRIGGER on_auth_user_created
     AFTER INSERT ON auth.users
     FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
--- 13. Seed Main Super Admin Account (sooriyamoorthy0107@gmail.com / Sooriya123*)
+-- 15. Seed Main Super Admin Account (sooriyamoorthy0107@gmail.com / Sooriya123*)
 -- Automatically populates auth.users (pre-confirmed, no email link needed)
 INSERT INTO auth.users (
     instance_id,
@@ -368,7 +310,7 @@ INSERT INTO public.users (
 ON CONFLICT (register_number) DO UPDATE 
 SET full_name = EXCLUDED.full_name, email = EXCLUDED.email, role = 'organizer', status = 'approved';
 
--- 14. Real Equipment Inventory (All camera gear preserved with valid UUIDs)
+-- 16. Real Equipment Inventory (All camera gear preserved with valid UUIDs)
 INSERT INTO public.equipment (id, name, category, serial_number, status, entered_by) VALUES
     ('00000000-0000-0000-0000-000000000101', 'Sony Alpha A7 IV (Body)', 'Camera', 'SN-SNY-9481', 'available', '00000000-0000-0000-0000-000000000001'),
     ('00000000-0000-0000-0000-000000000102', 'Canon EOS R6 Mark II', 'Camera', 'SN-CAN-1024', 'available', '00000000-0000-0000-0000-000000000001'),
@@ -378,7 +320,7 @@ INSERT INTO public.equipment (id, name, category, serial_number, status, entered
 ON CONFLICT (serial_number) DO UPDATE
 SET name = EXCLUDED.name, category = EXCLUDED.category, status = EXCLUDED.status;
 
--- Initial Activity Log
+-- 17. Initial Activity Log
 INSERT INTO public.activity_logs (actor_id, actor_name, actor_regnum, actor_role, action, details)
 VALUES (
     '00000000-0000-0000-0000-000000000001',
