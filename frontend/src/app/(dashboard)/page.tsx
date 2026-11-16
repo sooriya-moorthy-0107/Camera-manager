@@ -25,7 +25,7 @@ const DEFAULT_USERS: UserProfile[] = [
 // Preserved Real Camera Inventory
 const DEFAULT_EQUIPMENT: Equipment[] = [
   {
-    id: 'eq-1',
+    id: '00000000-0000-0000-0000-000000000101',
     name: 'Sony Alpha A7 IV (Body)',
     category: 'Camera',
     serial_number: 'SN-SNY-9481',
@@ -36,7 +36,7 @@ const DEFAULT_EQUIPMENT: Equipment[] = [
     created_at: new Date().toISOString(),
   },
   {
-    id: 'eq-2',
+    id: '00000000-0000-0000-0000-000000000102',
     name: 'Canon EOS R6 Mark II',
     category: 'Camera',
     serial_number: 'SN-CAN-1024',
@@ -47,7 +47,7 @@ const DEFAULT_EQUIPMENT: Equipment[] = [
     created_at: new Date().toISOString(),
   },
   {
-    id: 'eq-3',
+    id: '00000000-0000-0000-0000-000000000103',
     name: 'DJI RS 3 Pro Gimbal',
     category: 'Stabilizer',
     serial_number: 'SN-DJI-5521',
@@ -58,7 +58,7 @@ const DEFAULT_EQUIPMENT: Equipment[] = [
     created_at: new Date().toISOString(),
   },
   {
-    id: 'eq-4',
+    id: '00000000-0000-0000-0000-000000000104',
     name: 'Rode Wireless GO II Dual',
     category: 'Audio',
     serial_number: 'SN-ROD-8812',
@@ -69,7 +69,7 @@ const DEFAULT_EQUIPMENT: Equipment[] = [
     created_at: new Date().toISOString(),
   },
   {
-    id: 'eq-5',
+    id: '00000000-0000-0000-0000-000000000105',
     name: 'Sony FE 24-70mm f/2.8 GM II',
     category: 'Lens',
     serial_number: 'SN-SNY-4491',

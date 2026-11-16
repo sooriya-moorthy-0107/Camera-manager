@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/Button';
 // Real Equipment Inventory with Main Super Admin as Author
 const INITIAL_INVENTORY: Equipment[] = [
   {
-    id: 'eq-1',
+    id: '00000000-0000-0000-0000-000000000101',
     name: 'Sony Alpha A7 IV (Body)',
     category: 'Camera',
     serial_number: 'SN-SNY-9481',
@@ -22,7 +22,7 @@ const INITIAL_INVENTORY: Equipment[] = [
     created_at: new Date().toISOString(),
   },
   {
-    id: 'eq-2',
+    id: '00000000-0000-0000-0000-000000000102',
     name: 'Canon EOS R6 Mark II',
     category: 'Camera',
     serial_number: 'SN-CAN-1024',
@@ -33,7 +33,7 @@ const INITIAL_INVENTORY: Equipment[] = [
     created_at: new Date().toISOString(),
   },
   {
-    id: 'eq-3',
+    id: '00000000-0000-0000-0000-000000000103',
     name: 'DJI RS 3 Pro Gimbal',
     category: 'Stabilizer',
     serial_number: 'SN-DJI-5521',
@@ -44,7 +44,7 @@ const INITIAL_INVENTORY: Equipment[] = [
     created_at: new Date().toISOString(),
   },
   {
-    id: 'eq-4',
+    id: '00000000-0000-0000-0000-000000000104',
     name: 'Rode Wireless GO II Dual',
     category: 'Audio',
     serial_number: 'SN-ROD-8812',
@@ -55,7 +55,7 @@ const INITIAL_INVENTORY: Equipment[] = [
     created_at: new Date().toISOString(),
   },
   {
-    id: 'eq-5',
+    id: '00000000-0000-0000-0000-000000000105',
     name: 'Sony FE 24-70mm f/2.8 GM II',
     category: 'Lens',
     serial_number: 'SN-SNY-4491',
@@ -154,7 +154,7 @@ export default function InventoryPage() {
         };
       }
 
-      const newId = `eq-${Date.now()}`;
+      const newId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : '00000000-0000-0000-0000-' + Date.now().toString().padStart(12, '0');
       const payload: Equipment = {
         id: newId,
         name: data.name,

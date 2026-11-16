@@ -313,19 +313,20 @@ INSERT INTO public.users (
 ON CONFLICT (register_number) DO UPDATE 
 SET full_name = EXCLUDED.full_name, email = EXCLUDED.email, role = 'organizer', status = 'approved';
 
--- 14. Real Equipment Inventory (All camera gear preserved & available)
+-- 14. Real Equipment Inventory (All camera gear preserved with valid UUIDs)
 INSERT INTO public.equipment (id, name, category, serial_number, status, entered_by) VALUES
-    ('eq-1', 'Sony Alpha A7 IV (Body)', 'Camera', 'SN-SNY-9481', 'available', '00000000-0000-0000-0000-000000000001'),
-    ('eq-2', 'Canon EOS R6 Mark II', 'Camera', 'SN-CAN-1024', 'available', '00000000-0000-0000-0000-000000000001'),
-    ('eq-3', 'DJI RS 3 Pro Gimbal', 'Stabilizer', 'SN-DJI-5521', 'available', '00000000-0000-0000-0000-000000000001'),
-    ('eq-4', 'Rode Wireless GO II Dual', 'Audio', 'SN-ROD-8812', 'available', '00000000-0000-0000-0000-000000000001'),
-    ('eq-5', 'Sony FE 24-70mm f/2.8 GM II', 'Lens', 'SN-SNY-4491', 'available', '00000000-0000-0000-0000-000000000001')
+    ('00000000-0000-0000-0000-000000000101', 'Sony Alpha A7 IV (Body)', 'Camera', 'SN-SNY-9481', 'available', '00000000-0000-0000-0000-000000000001'),
+    ('00000000-0000-0000-0000-000000000102', 'Canon EOS R6 Mark II', 'Camera', 'SN-CAN-1024', 'available', '00000000-0000-0000-0000-000000000001'),
+    ('00000000-0000-0000-0000-000000000103', 'DJI RS 3 Pro Gimbal', 'Stabilizer', 'SN-DJI-5521', 'available', '00000000-0000-0000-0000-000000000001'),
+    ('00000000-0000-0000-0000-000000000104', 'Rode Wireless GO II Dual', 'Audio', 'SN-ROD-8812', 'available', '00000000-0000-0000-0000-000000000001'),
+    ('00000000-0000-0000-0000-000000000105', 'Sony FE 24-70mm f/2.8 GM II', 'Lens', 'SN-SNY-4491', 'available', '00000000-0000-0000-0000-000000000001')
 ON CONFLICT (serial_number) DO UPDATE
 SET name = EXCLUDED.name, category = EXCLUDED.category, status = EXCLUDED.status;
 
 -- Initial Activity Log
-INSERT INTO public.activity_logs (actor_name, actor_regnum, actor_role, action, details)
+INSERT INTO public.activity_logs (actor_id, actor_name, actor_regnum, actor_role, action, details)
 VALUES (
+    '00000000-0000-0000-0000-000000000001',
     'Sooriya Moorthy',
     'REG-ORG-001',
     'organizer',
