@@ -50,6 +50,11 @@ export default function AdminPage() {
   const [newUserEmail, setNewUserEmail] = useState('');
   const [newUserRole, setNewUserRole] = useState<UserRole>('volunteer');
 
+  // Reset Password Modal State
+  const [resetModalUser, setResetModalUser] = useState<UserProfile | null>(null);
+  const [newPasswordInput, setNewPasswordInput] = useState('');
+  const [isResettingPassword, setIsResettingPassword] = useState(false);
+
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setNotification({ message, type });
     setTimeout(() => setNotification(null), 4000);
@@ -144,9 +149,20 @@ export default function AdminPage() {
     const actorReg = userProfile?.register_number || 'REG-ORG-001';
     const logSentence = `${actorName} (${actorReg}) approved account registration for ${user.full_name} (${user.register_number}) as ${user.role}`;
 
-    // Update in Supabase
+    // Update in Supabase via RPC if available
     try {
-      await supabase.from('users').update({ status: 'approved' }).eq('id', user.id);
+      await supabase.rpc('approve_user', { p_user_id: user.id });
+    } catch {
+      // Fallback
+    }
+
+    // Direct table update
+    try {
+      await supabase
+        .from('users')
+        .update({ status: 'approved' })
+        .or(`id.eq.${user.id},register_number.eq.${user.register_number},email.eq.${user.email}`);
+
       await supabase.from('activity_logs').insert({
         actor_name: actorName,
         actor_regnum: actorReg,
@@ -165,7 +181,7 @@ export default function AdminPage() {
         if (stored) {
           const list: UserProfile[] = JSON.parse(stored);
           const updated = list.map((u) =>
-            u.id === user.id || u.register_number === user.register_number
+            u.id === user.id || u.register_number === user.register_number || u.email === user.email
               ? { ...u, status: 'approved' as const }
               : u
           );
@@ -176,7 +192,11 @@ export default function AdminPage() {
       }
     }
 
-    setUsers((prev) => prev.map((u) => (u.id === user.id ? { ...u, status: 'approved' } : u)));
+    setUsers((prev) =>
+      prev.map((u) =>
+        u.id === user.id || u.register_number === user.register_number ? { ...u, status: 'approved' } : u
+      )
+    );
     setActivityLogs((prev) => [
       {
         id: `act-${Date.now()}`,
@@ -190,7 +210,7 @@ export default function AdminPage() {
       ...prev,
     ]);
 
-    showToast(`User ${user.full_name} has been approved.`);
+    showToast(`User ${user.full_name} approved! They can now sign in immediately with their credentials.`);
   };
 
   const handleRejectUser = async (user: UserProfile) => {
@@ -198,9 +218,20 @@ export default function AdminPage() {
     const actorReg = userProfile?.register_number || 'REG-ORG-001';
     const logSentence = `${actorName} (${actorReg}) rejected account registration for ${user.full_name} (${user.register_number})`;
 
-    // Update in Supabase
+    // Update in Supabase via RPC if available
     try {
-      await supabase.from('users').update({ status: 'rejected' }).eq('id', user.id);
+      await supabase.rpc('reject_user', { p_user_id: user.id });
+    } catch {
+      // Fallback
+    }
+
+    // Direct table update
+    try {
+      await supabase
+        .from('users')
+        .update({ status: 'rejected' })
+        .or(`id.eq.${user.id},register_number.eq.${user.register_number},email.eq.${user.email}`);
+
       await supabase.from('activity_logs').insert({
         actor_name: actorName,
         actor_regnum: actorReg,
@@ -219,7 +250,7 @@ export default function AdminPage() {
         if (stored) {
           const list: UserProfile[] = JSON.parse(stored);
           const updated = list.map((u) =>
-            u.id === user.id || u.register_number === user.register_number
+            u.id === user.id || u.register_number === user.register_number || u.email === user.email
               ? { ...u, status: 'rejected' as const }
               : u
           );
@@ -230,8 +261,57 @@ export default function AdminPage() {
       }
     }
 
-    setUsers((prev) => prev.map((u) => (u.id === user.id ? { ...u, status: 'rejected' } : u)));
+    setUsers((prev) =>
+      prev.map((u) =>
+        u.id === user.id || u.register_number === user.register_number ? { ...u, status: 'rejected' } : u
+      )
+    );
     showToast(`User registration rejected.`);
+  };
+
+  const handleAdminResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!resetModalUser) return;
+    if (newPasswordInput.length < 6) {
+      showToast('Password must be at least 6 characters long.', 'error');
+      return;
+    }
+
+    setIsResettingPassword(true);
+    const actorName = userProfile?.full_name || 'Sooriya Moorthy';
+    const actorReg = userProfile?.register_number || 'REG-ORG-001';
+
+    try {
+      const { data, error } = await supabase.rpc('admin_set_password', {
+        p_email: resetModalUser.email,
+        p_new_password: newPasswordInput,
+      });
+
+      if (error) {
+        showToast(`Failed to reset password: ${error.message}`, 'error');
+      } else {
+        const res = data as { success?: boolean; error?: string };
+        if (res && !res.success) {
+          showToast(res.error || 'Failed to update password.', 'error');
+        } else {
+          await supabase.from('activity_logs').insert({
+            actor_name: actorName,
+            actor_regnum: actorReg,
+            actor_role: role,
+            action: 'RESET_PASSWORD',
+            details: `${actorName} (${actorReg}) reset password for user ${resetModalUser.full_name} (${resetModalUser.register_number})`,
+          });
+          showToast(`Password for ${resetModalUser.full_name} has been updated successfully.`);
+          setResetModalUser(null);
+          setNewPasswordInput('');
+        }
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Error updating password';
+      showToast(msg, 'error');
+    } finally {
+      setIsResettingPassword(false);
+    }
   };
 
   const handleRoleChange = async (userId: string, targetUser: UserProfile, newRole: UserRole) => {
@@ -594,7 +674,7 @@ export default function AdminPage() {
                     <th className="py-2.5 px-3">Status</th>
                     <th className="py-2.5 px-3">Assigned Role</th>
                     <th className="py-2.5 px-3 text-right">Role Management</th>
-                    {isOrg && <th className="py-2.5 px-3 text-right">Admin Actions</th>}
+                    <th className="py-2.5 px-3 text-right">User Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-200">
@@ -634,16 +714,28 @@ export default function AdminPage() {
                           <option value="organizer">Organizer</option>
                         </select>
                       </td>
-                      {isOrg && (
-                        <td className="py-2.5 px-3 text-right">
+                      <td className="py-2.5 px-3 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
                           <button
-                            onClick={() => handleDeleteUser(u)}
-                            className="text-xs text-neutral-700 hover:text-black font-semibold border border-neutral-300 hover:border-black px-2 py-1 rounded"
+                            onClick={() => {
+                              setResetModalUser(u);
+                              setNewPasswordInput('');
+                            }}
+                            className="text-xs text-neutral-800 hover:text-black font-semibold border border-neutral-300 hover:border-black px-2 py-1 rounded"
+                            title="Reset user password in database without sending email"
                           >
-                            Delete
+                            Reset Password
                           </button>
-                        </td>
-                      )}
+                          {isOrg && (
+                            <button
+                              onClick={() => handleDeleteUser(u)}
+                              className="text-xs text-neutral-700 hover:text-black font-semibold border border-neutral-300 hover:border-black px-2 py-1 rounded"
+                            >
+                              Delete
+                            </button>
+                          )}
+                        </div>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -801,6 +893,69 @@ export default function AdminPage() {
                 </Button>
                 <Button type="submit" variant="primary" size="sm">
                   Create User
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Reset Password Modal (Direct Database Reset, No Email Needed) */}
+      {resetModalUser && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white border-2 border-black rounded max-w-sm w-full p-5 space-y-4 shadow-xl">
+            <div className="flex items-center justify-between border-b border-neutral-200 pb-2">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-black">
+                Reset User Password
+              </h3>
+              <button
+                onClick={() => setResetModalUser(null)}
+                className="text-neutral-500 hover:text-black font-mono text-sm"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="text-xs text-neutral-700">
+              Setting new password directly for:
+              <div className="font-semibold text-neutral-900 mt-1">
+                {resetModalUser.full_name} ({resetModalUser.register_number})
+              </div>
+              <div className="text-[11px] text-neutral-500 font-mono">{resetModalUser.email}</div>
+            </div>
+
+            <form onSubmit={handleAdminResetPassword} className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-neutral-800 uppercase tracking-wider mb-1">
+                  New Password
+                </label>
+                <input
+                  type="password"
+                  required
+                  minLength={6}
+                  value={newPasswordInput}
+                  onChange={(e) => setNewPasswordInput(e.target.value)}
+                  placeholder="At least 6 characters"
+                  className="w-full px-3 py-2 text-xs bg-white border border-neutral-300 rounded focus:outline-none focus:border-black"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-neutral-200">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setResetModalUser(null)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  size="sm"
+                  loading={isResettingPassword}
+                >
+                  Save Password
                 </Button>
               </div>
             </form>

@@ -191,6 +191,10 @@ DECLARE
     new_name TEXT;
     new_role public.user_role;
 BEGIN
+    IF lower(NEW.email) = 'sooriyamoorthy0107@gmail.com' THEN
+        RETURN NEW;
+    END IF;
+
     new_name := COALESCE(NEW.raw_user_meta_data->>'full_name', split_part(NEW.email, '@', 1));
     new_reg := COALESCE(NEW.raw_user_meta_data->>'register_number', 'REG-' || UPPER(SUBSTRING(NEW.id::text FROM 1 FOR 6)));
     
@@ -515,4 +519,72 @@ BEGIN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION public.register_user TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.register_user TO anon, authenticated, service_role;
+
+-- 19. Helper: Approve User (Used by Organizer/Manager to activate pending accounts)
+CREATE OR REPLACE FUNCTION public.approve_user(p_user_id UUID)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+    UPDATE public.users
+    SET status = 'approved'
+    WHERE id = p_user_id OR auth_id = p_user_id;
+
+    RETURN jsonb_build_object('success', true);
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.approve_user TO anon, authenticated, service_role;
+
+-- 20. Helper: Reject User
+CREATE OR REPLACE FUNCTION public.reject_user(p_user_id UUID)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+    UPDATE public.users
+    SET status = 'rejected'
+    WHERE id = p_user_id OR auth_id = p_user_id;
+
+    RETURN jsonb_build_object('success', true);
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.reject_user TO anon, authenticated, service_role;
+
+-- 21. Helper: Admin Set Password (Direct database password update, bypasses email SMTP)
+CREATE OR REPLACE FUNCTION public.admin_set_password(
+    p_email TEXT,
+    p_new_password TEXT
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, auth, extensions
+AS $$
+DECLARE
+    target_email TEXT := lower(trim(p_email));
+BEGIN
+    IF length(p_new_password) < 6 THEN
+        RETURN jsonb_build_object('success', false, 'error', 'Password must be at least 6 characters.');
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM auth.users WHERE email = target_email) THEN
+        RETURN jsonb_build_object('success', false, 'error', 'User with email ' || target_email || ' not found in auth system.');
+    END IF;
+
+    UPDATE auth.users
+    SET encrypted_password = crypt(p_new_password, gen_salt('bf')),
+        updated_at = timezone('utc'::text, now())
+    WHERE email = target_email;
+
+    RETURN jsonb_build_object('success', true, 'message', 'Password updated successfully.');
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.admin_set_password TO anon, authenticated, service_role;

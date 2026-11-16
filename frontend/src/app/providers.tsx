@@ -37,6 +37,7 @@ interface AuthContextType {
     token: string,
     newPassword: string
   ) => Promise<{ error?: string; message?: string }>;
+  adminSetPassword: (email: string, newPassword: string) => Promise<{ error?: string; message?: string }>;
   refreshProfile: () => Promise<void>;
 }
 
@@ -47,11 +48,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const fetchProfile = async (authUserId: string, userEmail?: string) => {
+  const fetchProfile = async (authUserId: string, userEmail?: string): Promise<UserProfile | null> => {
     // Check if super admin
     if (userEmail?.toLowerCase() === 'sooriyamoorthy0107@gmail.com') {
       setUserProfile(SUPER_ADMIN_PROFILE);
-      return;
+      return SUPER_ADMIN_PROFILE;
     }
 
     try {
@@ -62,11 +63,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         .maybeSingle();
 
       if (data && !error) {
-        setUserProfile(data as UserProfile);
+        const prof = data as UserProfile;
+        setUserProfile(prof);
+        return prof;
       }
     } catch {
       // Fallback
     }
+
+    // Local storage fallback
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('cm_registered_users');
+        if (stored) {
+          const list: UserProfile[] = JSON.parse(stored);
+          const found = list.find((u) => u.email === userEmail || u.auth_id === authUserId || u.id === authUserId);
+          if (found) {
+            setUserProfile(found);
+            return found;
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    return null;
   };
 
   useEffect(() => {
@@ -97,8 +119,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         } = await supabase.auth.getSession();
         if (mounted) {
           if (session?.user) {
-            setUser(session.user);
-            await fetchProfile(session.user.id, session.user.email);
+            const profile = await fetchProfile(session.user.id, session.user.email);
+            // Strict security check: Pending or Rejected accounts are denied entry
+            if (profile && (profile.status === 'pending' || profile.status === 'rejected')) {
+              await supabase.auth.signOut();
+              setUser(null);
+              setUserProfile(null);
+            } else {
+              setUser(session.user);
+            }
           } else {
             setUser(null);
             setUserProfile(null);
@@ -118,8 +147,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } = supabase.auth.onAuthStateChange(async (_event, session) => {
       if (!mounted) return;
       if (session?.user) {
-        setUser(session.user);
-        await fetchProfile(session.user.id, session.user.email);
+        if (session.user.email?.toLowerCase() === 'sooriyamoorthy0107@gmail.com') {
+          setUser(session.user);
+          setUserProfile(SUPER_ADMIN_PROFILE);
+          setLoading(false);
+          return;
+        }
+
+        const profile = await fetchProfile(session.user.id, session.user.email);
+        if (profile && (profile.status === 'pending' || profile.status === 'rejected')) {
+          await supabase.auth.signOut();
+          setUser(null);
+          setUserProfile(null);
+        } else {
+          setUser(session.user);
+        }
       } else {
         const localSession = typeof window !== 'undefined' ? localStorage.getItem('cm_active_session') : null;
         if (localSession === 'sooriyamoorthy0107@gmail.com') {
@@ -166,7 +208,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         localStorage.setItem('cm_active_session', cleanEmail);
       }
 
-      // Also attempt background sync with Supabase auth
+      // Background sync with Supabase auth if possible
       try {
         await supabase.auth.signInWithPassword({ email: cleanEmail, password });
       } catch {
@@ -175,34 +217,65 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return {};
     }
 
-    // 2. Standard Supabase Sign In
-    const { data, error } = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
-    if (error) {
-      // Check if user exists in public.users to give a clear, informative status message
-      try {
-        const { data: userRow } = await supabase
-          .from('users')
-          .select('status, role, full_name')
-          .eq('email', cleanEmail)
-          .maybeSingle();
+    // 2. Pre-check: Check if user exists and is pending or rejected
+    let preCheckProfile: UserProfile | null = null;
+    try {
+      const { data: dbUser } = await supabase
+        .from('users')
+        .select('*')
+        .eq('email', cleanEmail)
+        .maybeSingle();
+      if (dbUser) preCheckProfile = dbUser as UserProfile;
+    } catch {
+      // ignore
+    }
 
-        if (userRow?.status === 'pending') {
-          return {
-            error: `Account for ${userRow.full_name || cleanEmail} is PENDING APPROVAL by an Organizer or Manager. Please wait for authorization.`,
-          };
-        }
-        if (userRow?.status === 'rejected') {
-          return { error: 'Your account registration was rejected. Please contact an Organizer.' };
+    if (!preCheckProfile && typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('cm_registered_users');
+        if (stored) {
+          const list: UserProfile[] = JSON.parse(stored);
+          preCheckProfile = list.find((u) => u.email === cleanEmail) || null;
         }
       } catch {
         // ignore
       }
+    }
 
+    if (preCheckProfile?.status === 'pending') {
+      return {
+        error: `Your account (${preCheckProfile.full_name}) is PENDING APPROVAL by an Organizer or Manager. Please wait until your account has been approved before signing in.`,
+      };
+    }
+    if (preCheckProfile?.status === 'rejected') {
+      return {
+        error: 'Your account registration was rejected by an Organizer or Manager. Please contact support.',
+      };
+    }
+
+    // 3. Supabase Auth Sign In
+    const { data, error } = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
+    if (error) {
       return { error: error.message };
     }
+
     if (data.user) {
+      const profile = await fetchProfile(data.user.id, data.user.email);
+      if (profile && (profile.status === 'pending' || profile.status === 'rejected')) {
+        await supabase.auth.signOut();
+        setUser(null);
+        setUserProfile(null);
+        if (profile.status === 'pending') {
+          return {
+            error: `Your account (${profile.full_name}) is PENDING APPROVAL by an Organizer or Manager. Please wait until your account is approved before signing in.`,
+          };
+        } else {
+          return {
+            error: 'Your account registration was rejected by an Organizer or Manager. Please contact support.',
+          };
+        }
+      }
       setUser(data.user);
-      await fetchProfile(data.user.id, data.user.email);
     }
     return {};
   };
@@ -217,7 +290,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const cleanEmail = email.trim().toLowerCase();
     const cleanReg = registerNumber.trim().toUpperCase();
 
-    // 1. Attempt secure in-database registration RPC (Pre-confirms, zero SMTP rate limits)
+    // 1. Attempt secure in-database registration RPC (Pre-confirms, ZERO outgoing emails)
     try {
       const { data: rpcRes, error: rpcErr } = await supabase.rpc('register_user', {
         p_email: cleanEmail,
@@ -261,41 +334,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return { isPending: true };
       }
     } catch (rpcEx) {
-      console.warn('RPC register_user exception, falling back to standard signup:', rpcEx);
+      console.warn('RPC register_user exception, falling back to direct database insertion:', rpcEx);
     }
 
-    // 2. Fallback to Supabase Auth signUp
-    let authUserId: string | null = null;
-    try {
-      const { data, error } = await supabase.auth.signUp({
-        email: cleanEmail,
-        password,
-        options: {
-          data: {
-            full_name: fullName,
-            register_number: cleanReg,
-            role,
-          },
-        },
-      });
-
-      if (error && !error.message.includes('rate limit')) {
-        return { error: error.message };
-      }
-      authUserId = data?.user?.id || null;
-    } catch (authErr) {
-      console.warn('Supabase Auth error during signup:', authErr);
-    }
-
+    // 2. Fallback: Direct public table registration without triggering email SMTP
     const userId =
-      authUserId ||
-      (typeof crypto !== 'undefined' && crypto.randomUUID
+      typeof crypto !== 'undefined' && crypto.randomUUID
         ? crypto.randomUUID()
-        : '00000000-0000-0000-0000-' + Date.now().toString().padStart(12, '0'));
+        : '00000000-0000-0000-0000-' + Date.now().toString().padStart(12, '0');
 
     const newProfile: UserProfile = {
       id: userId,
-      auth_id: authUserId, // Set null if authUserId is null to avoid foreign key violations
+      auth_id: null,
       email: cleanEmail,
       full_name: fullName,
       register_number: cleanReg,
@@ -304,7 +354,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       created_at: new Date().toISOString(),
     };
 
-    // 3. Direct upsert into public.users table
     try {
       const { error: upsertErr } = await supabase
         .from('users')
@@ -326,7 +375,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.warn('Database insert error:', dbErr);
     }
 
-    // 4. Persist to localStorage for guaranteed admin visibility
     if (typeof window !== 'undefined') {
       try {
         const stored = localStorage.getItem('cm_registered_users');
@@ -347,6 +395,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     return { isPending: true };
+  };
+
+  // Direct Admin Password Reset (In-Database, No Email OTP required)
+  const adminSetPassword = async (email: string, newPassword: string) => {
+    const cleanEmail = email.trim().toLowerCase();
+    try {
+      const { data, error } = await supabase.rpc('admin_set_password', {
+        p_email: cleanEmail,
+        p_new_password: newPassword,
+      });
+
+      if (error) {
+        return { error: error.message };
+      }
+      const res = data as { success?: boolean; error?: string; message?: string };
+      if (res && !res.success) {
+        return { error: res.error || 'Failed to update password.' };
+      }
+      return { message: res?.message || `Password for ${cleanEmail} updated successfully.` };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to update password.';
+      return { error: msg };
+    }
   };
 
   // Reset Password via OTP
@@ -438,6 +509,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         signOut,
         sendPasswordResetOtp,
         verifyOtpAndResetPassword,
+        adminSetPassword,
         refreshProfile,
       }}
     >
