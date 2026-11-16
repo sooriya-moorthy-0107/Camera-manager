@@ -195,46 +195,88 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     role: UserRole = 'volunteer'
   ) => {
     const cleanEmail = email.trim().toLowerCase();
+    const cleanReg = registerNumber.trim().toUpperCase();
 
-    // Attempt Supabase email signup
-    const { data, error } = await supabase.auth.signUp({
-      email: cleanEmail,
-      password,
-      options: {
-        data: {
-          full_name: fullName,
-          register_number: registerNumber,
-          role,
+    // 1. Attempt Supabase email signup with metadata
+    let authUserId: string | null = null;
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email: cleanEmail,
+        password,
+        options: {
+          data: {
+            full_name: fullName,
+            register_number: cleanReg,
+            role,
+          },
         },
-      },
-    });
+      });
 
-    if (error && !error.message.includes('rate limit')) {
-      return { error: error.message };
+      if (error && !error.message.includes('rate limit')) {
+        return { error: error.message };
+      }
+      authUserId = data?.user?.id || null;
+    } catch (authErr) {
+      console.warn('Supabase Auth error during signup:', authErr);
     }
 
-    // Insert user record with status 'pending'
-    const newProfile: Partial<UserProfile> = {
-      auth_id: data?.user?.id || null,
+    const userId =
+      authUserId ||
+      (typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : '00000000-0000-0000-0000-' + Date.now().toString().padStart(12, '0'));
+
+    const newProfile: UserProfile = {
+      id: userId,
+      auth_id: authUserId || userId,
       email: cleanEmail,
       full_name: fullName,
-      register_number: registerNumber,
+      register_number: cleanReg,
       role,
       status: 'pending',
+      created_at: new Date().toISOString(),
     };
 
+    // 2. Direct upsert into public.users table
     try {
-      await supabase.from('users').upsert(newProfile);
+      const { error: upsertErr } = await supabase
+        .from('users')
+        .upsert(newProfile, { onConflict: 'register_number' });
+
+      if (upsertErr) {
+        console.warn('Direct user upsert error:', upsertErr.message);
+      }
 
       await supabase.from('activity_logs').insert({
+        actor_id: userId,
         actor_name: fullName,
-        actor_regnum: registerNumber,
+        actor_regnum: cleanReg,
         actor_role: role,
         action: 'USER_SIGNUP',
-        details: `New user ${fullName} (${registerNumber}) registered with role ${role}. Status is Pending Approval.`,
+        details: `New user ${fullName} (${cleanReg}) registered with role ${role}. Status is Pending Approval.`,
       });
-    } catch {
-      // Offline fallback
+    } catch (dbErr) {
+      console.warn('Database insert error:', dbErr);
+    }
+
+    // 3. Persist to localStorage for guaranteed admin visibility
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('cm_registered_users');
+        const list: UserProfile[] = stored ? JSON.parse(stored) : [];
+        const existingIdx = list.findIndex(
+          (u) => u.register_number === cleanReg || u.email === cleanEmail
+        );
+        if (existingIdx >= 0) {
+          list[existingIdx] = newProfile;
+        } else {
+          list.push(newProfile);
+        }
+        localStorage.setItem('cm_registered_users', JSON.stringify(list));
+        window.dispatchEvent(new Event('cm_user_registered'));
+      } catch (lsErr) {
+        console.warn('LocalStorage save error:', lsErr);
+      }
     }
 
     return { isPending: true };

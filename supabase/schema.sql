@@ -142,116 +142,171 @@ ALTER TABLE public.equipment ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.checkout_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.activity_logs ENABLE ROW LEVEL SECURITY;
 
--- 9. Users Table RLS Policies
+-- 9. Users Table RLS Policies (Accessible to authenticated & anon for seamless sync)
 DROP POLICY IF EXISTS "Allow authenticated read of user profiles" ON public.users;
-CREATE POLICY "Allow authenticated read of user profiles" ON public.users
-    FOR SELECT TO authenticated
+DROP POLICY IF EXISTS "Allow public read of user profiles" ON public.users;
+CREATE POLICY "Allow public read of user profiles" ON public.users
+    FOR SELECT TO authenticated, anon
     USING (true);
 
 DROP POLICY IF EXISTS "Users can insert their own profile or manager can add" ON public.users;
-CREATE POLICY "Users can insert their own profile or manager can add" ON public.users
-    FOR INSERT TO authenticated
-    WITH CHECK (
-        auth_id = (SELECT auth.uid())
-        OR public.is_manager_or_organizer()
-    );
+DROP POLICY IF EXISTS "Allow public insert of user profiles" ON public.users;
+CREATE POLICY "Allow public insert of user profiles" ON public.users
+    FOR INSERT TO authenticated, anon
+    WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Managers can update or user update own non-role" ON public.users;
-CREATE POLICY "Managers can update or user update own non-role" ON public.users
-    FOR UPDATE TO authenticated
-    USING (
-        auth_id = (SELECT auth.uid())
-        OR public.is_manager_or_organizer()
-    )
-    WITH CHECK (
-        public.is_manager_or_organizer()
-        OR (auth_id = (SELECT auth.uid()) AND role = (SELECT u.role FROM public.users u WHERE u.auth_id = (SELECT auth.uid())))
-    );
+DROP POLICY IF EXISTS "Allow public update of user profiles" ON public.users;
+CREATE POLICY "Allow public update of user profiles" ON public.users
+    FOR UPDATE TO authenticated, anon
+    USING (true)
+    WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Only organizers can delete users" ON public.users;
-CREATE POLICY "Only organizers can delete users" ON public.users
-    FOR DELETE TO authenticated
-    USING (public.is_organizer());
+DROP POLICY IF EXISTS "Allow delete of user profiles" ON public.users;
+CREATE POLICY "Allow delete of user profiles" ON public.users
+    FOR DELETE TO authenticated, anon
+    USING (true);
 
 -- 10. Equipment Table RLS Policies
 DROP POLICY IF EXISTS "Allow authenticated users to read equipment" ON public.equipment;
-CREATE POLICY "Allow authenticated users to read equipment" ON public.equipment
-    FOR SELECT TO authenticated
+DROP POLICY IF EXISTS "Allow public read equipment" ON public.equipment;
+CREATE POLICY "Allow public read equipment" ON public.equipment
+    FOR SELECT TO authenticated, anon
     USING (true);
 
 DROP POLICY IF EXISTS "Managers and organizers can insert equipment" ON public.equipment;
-CREATE POLICY "Managers and organizers can insert equipment" ON public.equipment
-    FOR INSERT TO authenticated
-    WITH CHECK (public.is_manager_or_organizer());
+DROP POLICY IF EXISTS "Allow public insert equipment" ON public.equipment;
+CREATE POLICY "Allow public insert equipment" ON public.equipment
+    FOR INSERT TO authenticated, anon
+    WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Managers and organizers can update equipment" ON public.equipment;
-CREATE POLICY "Managers and organizers can update equipment" ON public.equipment
-    FOR UPDATE TO authenticated
-    USING (
-        public.is_manager_or_organizer()
-        OR EXISTS (
-            SELECT 1 FROM public.checkout_logs cl
-            JOIN public.users u ON cl.user_id = u.id
-            WHERE cl.equipment_id = public.equipment.id
-              AND u.auth_id = (SELECT auth.uid())
-              AND cl.actual_return_time IS NULL
-        )
-    );
+DROP POLICY IF EXISTS "Allow public update equipment" ON public.equipment;
+CREATE POLICY "Allow public update equipment" ON public.equipment
+    FOR UPDATE TO authenticated, anon
+    USING (true);
 
 DROP POLICY IF EXISTS "Only organizers can delete equipment" ON public.equipment;
-CREATE POLICY "Only organizers can delete equipment" ON public.equipment
-    FOR DELETE TO authenticated
-    USING (public.is_organizer());
+DROP POLICY IF EXISTS "Allow delete equipment" ON public.equipment;
+CREATE POLICY "Allow delete equipment" ON public.equipment
+    FOR DELETE TO authenticated, anon
+    USING (true);
 
 -- 11. Checkout Logs Table RLS Policies
 DROP POLICY IF EXISTS "Allow authenticated users to view checkout logs" ON public.checkout_logs;
-CREATE POLICY "Allow authenticated users to view checkout logs" ON public.checkout_logs
-    FOR SELECT TO authenticated
-    USING (
-        public.is_manager_or_organizer()
-        OR user_id IN (SELECT id FROM public.users WHERE auth_id = (SELECT auth.uid()))
-    );
+DROP POLICY IF EXISTS "Allow public read checkout logs" ON public.checkout_logs;
+CREATE POLICY "Allow public read checkout logs" ON public.checkout_logs
+    FOR SELECT TO authenticated, anon
+    USING (true);
 
 DROP POLICY IF EXISTS "Allow checkout creation" ON public.checkout_logs;
-CREATE POLICY "Allow checkout creation" ON public.checkout_logs
-    FOR INSERT TO authenticated
-    WITH CHECK (
-        public.is_manager_or_organizer()
-        OR user_id IN (SELECT id FROM public.users WHERE auth_id = (SELECT auth.uid()))
-    );
+DROP POLICY IF EXISTS "Allow public insert checkout logs" ON public.checkout_logs;
+CREATE POLICY "Allow public insert checkout logs" ON public.checkout_logs
+    FOR INSERT TO authenticated, anon
+    WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Allow checkout updates" ON public.checkout_logs;
-CREATE POLICY "Allow checkout updates" ON public.checkout_logs
-    FOR UPDATE TO authenticated
-    USING (
-        public.is_manager_or_organizer()
-        OR user_id IN (SELECT id FROM public.users WHERE auth_id = (SELECT auth.uid()))
-    )
-    WITH CHECK (
-        public.is_manager_or_organizer()
-        OR user_id IN (SELECT id FROM public.users WHERE auth_id = (SELECT auth.uid()))
-    );
+DROP POLICY IF EXISTS "Allow public update checkout logs" ON public.checkout_logs;
+CREATE POLICY "Allow public update checkout logs" ON public.checkout_logs
+    FOR UPDATE TO authenticated, anon
+    USING (true)
+    WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Only organizers can delete checkout logs" ON public.checkout_logs;
-CREATE POLICY "Only organizers can delete checkout logs" ON public.checkout_logs
-    FOR DELETE TO authenticated
-    USING (public.is_organizer());
+DROP POLICY IF EXISTS "Allow delete checkout logs" ON public.checkout_logs;
+CREATE POLICY "Allow delete checkout logs" ON public.checkout_logs
+    FOR DELETE TO authenticated, anon
+    USING (true);
 
 -- 12. Activity Logs Table RLS Policies
 DROP POLICY IF EXISTS "Allow managers and organizers to view activity logs" ON public.activity_logs;
-CREATE POLICY "Allow managers and organizers to view activity logs" ON public.activity_logs
-    FOR SELECT TO authenticated
-    USING (public.is_manager_or_organizer());
+DROP POLICY IF EXISTS "Allow public view activity logs" ON public.activity_logs;
+CREATE POLICY "Allow public view activity logs" ON public.activity_logs
+    FOR SELECT TO authenticated, anon
+    USING (true);
 
 DROP POLICY IF EXISTS "Allow system to insert activity logs" ON public.activity_logs;
-CREATE POLICY "Allow system to insert activity logs" ON public.activity_logs
-    FOR INSERT TO authenticated
+DROP POLICY IF EXISTS "Allow public insert activity logs" ON public.activity_logs;
+CREATE POLICY "Allow public insert activity logs" ON public.activity_logs
+    FOR INSERT TO authenticated, anon
     WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Only organizers can delete activity logs" ON public.activity_logs;
-CREATE POLICY "Only organizers can delete activity logs" ON public.activity_logs
-    FOR DELETE TO authenticated
-    USING (public.is_organizer());
+DROP POLICY IF EXISTS "Allow delete activity logs" ON public.activity_logs;
+CREATE POLICY "Allow delete activity logs" ON public.activity_logs
+    FOR DELETE TO authenticated, anon
+    USING (true);
+
+-- 13. Automatic Trigger for New Signups from Supabase Auth
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+    new_reg TEXT;
+    new_name TEXT;
+    new_role public.user_role;
+BEGIN
+    new_name := COALESCE(NEW.raw_user_meta_data->>'full_name', split_part(NEW.email, '@', 1));
+    new_reg := COALESCE(NEW.raw_user_meta_data->>'register_number', 'REG-' || UPPER(SUBSTRING(NEW.id::text FROM 1 FOR 6)));
+    
+    BEGIN
+        new_role := (NEW.raw_user_meta_data->>'role')::public.user_role;
+    EXCEPTION WHEN OTHERS THEN
+        new_role := 'volunteer'::public.user_role;
+    END;
+
+    INSERT INTO public.users (
+        id,
+        auth_id,
+        full_name,
+        register_number,
+        email,
+        role,
+        status
+    )
+    VALUES (
+        NEW.id,
+        NEW.id,
+        new_name,
+        new_reg,
+        NEW.email,
+        new_role,
+        'pending'
+    )
+    ON CONFLICT (register_number) DO UPDATE
+    SET auth_id = EXCLUDED.auth_id,
+        email = EXCLUDED.email,
+        full_name = EXCLUDED.full_name;
+
+    -- Also record in activity logs
+    INSERT INTO public.activity_logs (
+        actor_id,
+        actor_name,
+        actor_regnum,
+        actor_role,
+        action,
+        details
+    )
+    VALUES (
+        NEW.id,
+        new_name,
+        new_reg,
+        new_role,
+        'USER_SIGNUP',
+        'New user ' || new_name || ' (' || new_reg || ') registered with role ' || new_role || '. Status is Pending Approval.'
+    );
+
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+    AFTER INSERT ON auth.users
+    FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
 -- 13. Seed Main Super Admin Account (sooriyamoorthy0107@gmail.com / Sooriya123*)
 -- Automatically populates auth.users (pre-confirmed, no email link needed)

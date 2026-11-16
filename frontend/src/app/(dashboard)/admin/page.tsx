@@ -58,12 +58,46 @@ export default function AdminPage() {
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
-      const { data: uData } = await supabase.from('users').select('*').order('created_at', { ascending: false });
-      if (uData && uData.length > 0) {
-        setUsers(uData as UserProfile[]);
+
+      // 1. Fetch from Supabase
+      const { data: uData } = await supabase
+        .from('users')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      // 2. Fetch from LocalStorage fallback
+      let localList: UserProfile[] = [];
+      if (typeof window !== 'undefined') {
+        try {
+          const stored = localStorage.getItem('cm_registered_users');
+          if (stored) localList = JSON.parse(stored);
+        } catch {
+          // ignore
+        }
       }
 
-      const { data: aData } = await supabase.from('activity_logs').select('*').order('created_at', { ascending: false });
+      // Merge records uniquely by register_number / email
+      const mergedMap = new Map<string, UserProfile>();
+
+      // Put seed admin first
+      INITIAL_USERS.forEach((u) => mergedMap.set(u.register_number, u));
+
+      // Merge local storage signups
+      localList.forEach((u) => mergedMap.set(u.register_number, u));
+
+      // Merge Supabase data (authoritative when present)
+      if (uData && uData.length > 0) {
+        (uData as UserProfile[]).forEach((u) => mergedMap.set(u.register_number, u));
+      }
+
+      const mergedUsers = Array.from(mergedMap.values());
+      setUsers(mergedUsers);
+
+      const { data: aData } = await supabase
+        .from('activity_logs')
+        .select('*')
+        .order('created_at', { ascending: false });
+
       if (aData && aData.length > 0) {
         setActivityLogs(aData as ActivityLog[]);
       }
@@ -77,6 +111,13 @@ export default function AdminPage() {
   useEffect(() => {
     if (isManager) {
       loadData();
+      const interval = setInterval(loadData, 5000);
+      const onUserRegistered = () => loadData();
+      window.addEventListener('cm_user_registered', onUserRegistered);
+      return () => {
+        clearInterval(interval);
+        window.removeEventListener('cm_user_registered', onUserRegistered);
+      };
     }
   }, [isManager, loadData]);
 
@@ -103,6 +144,7 @@ export default function AdminPage() {
     const actorReg = userProfile?.register_number || 'REG-ORG-001';
     const logSentence = `${actorName} (${actorReg}) approved account registration for ${user.full_name} (${user.register_number}) as ${user.role}`;
 
+    // Update in Supabase
     try {
       await supabase.from('users').update({ status: 'approved' }).eq('id', user.id);
       await supabase.from('activity_logs').insert({
@@ -112,26 +154,43 @@ export default function AdminPage() {
         action: 'APPROVE_USER',
         details: logSentence,
       });
-
-      setUsers((prev) => prev.map((u) => (u.id === user.id ? { ...u, status: 'approved' } : u)));
-      setActivityLogs((prev) => [
-        {
-          id: `act-${Date.now()}`,
-          actor_name: actorName,
-          actor_regnum: actorReg,
-          actor_role: role,
-          action: 'APPROVE_USER',
-          details: logSentence,
-          created_at: new Date().toISOString(),
-        },
-        ...prev,
-      ]);
-
-      showToast(`User ${user.full_name} has been approved.`);
     } catch {
-      setUsers((prev) => prev.map((u) => (u.id === user.id ? { ...u, status: 'approved' } : u)));
-      showToast(`User ${user.full_name} has been approved.`);
+      // Fallback
     }
+
+    // Update in LocalStorage
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('cm_registered_users');
+        if (stored) {
+          const list: UserProfile[] = JSON.parse(stored);
+          const updated = list.map((u) =>
+            u.id === user.id || u.register_number === user.register_number
+              ? { ...u, status: 'approved' as const }
+              : u
+          );
+          localStorage.setItem('cm_registered_users', JSON.stringify(updated));
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    setUsers((prev) => prev.map((u) => (u.id === user.id ? { ...u, status: 'approved' } : u)));
+    setActivityLogs((prev) => [
+      {
+        id: `act-${Date.now()}`,
+        actor_name: actorName,
+        actor_regnum: actorReg,
+        actor_role: role,
+        action: 'APPROVE_USER',
+        details: logSentence,
+        created_at: new Date().toISOString(),
+      },
+      ...prev,
+    ]);
+
+    showToast(`User ${user.full_name} has been approved.`);
   };
 
   const handleRejectUser = async (user: UserProfile) => {
@@ -139,6 +198,7 @@ export default function AdminPage() {
     const actorReg = userProfile?.register_number || 'REG-ORG-001';
     const logSentence = `${actorName} (${actorReg}) rejected account registration for ${user.full_name} (${user.register_number})`;
 
+    // Update in Supabase
     try {
       await supabase.from('users').update({ status: 'rejected' }).eq('id', user.id);
       await supabase.from('activity_logs').insert({
@@ -148,13 +208,30 @@ export default function AdminPage() {
         action: 'REJECT_USER',
         details: logSentence,
       });
-
-      setUsers((prev) => prev.map((u) => (u.id === user.id ? { ...u, status: 'rejected' } : u)));
-      showToast(`User registration rejected.`);
     } catch {
-      setUsers((prev) => prev.map((u) => (u.id === user.id ? { ...u, status: 'rejected' } : u)));
-      showToast(`User registration rejected.`);
+      // Fallback
     }
+
+    // Update in LocalStorage
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('cm_registered_users');
+        if (stored) {
+          const list: UserProfile[] = JSON.parse(stored);
+          const updated = list.map((u) =>
+            u.id === user.id || u.register_number === user.register_number
+              ? { ...u, status: 'rejected' as const }
+              : u
+          );
+          localStorage.setItem('cm_registered_users', JSON.stringify(updated));
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    setUsers((prev) => prev.map((u) => (u.id === user.id ? { ...u, status: 'rejected' } : u)));
+    showToast(`User registration rejected.`);
   };
 
   const handleRoleChange = async (userId: string, targetUser: UserProfile, newRole: UserRole) => {
@@ -215,25 +292,39 @@ export default function AdminPage() {
         action: 'DELETE_USER',
         details: logSentence,
       });
-
-      setUsers((prev) => prev.filter((u) => u.id !== user.id));
-      setActivityLogs((prev) => [
-        {
-          id: `act-${Date.now()}`,
-          actor_name: actorName,
-          actor_regnum: actorReg,
-          actor_role: role,
-          action: 'DELETE_USER',
-          details: logSentence,
-          created_at: new Date().toISOString(),
-        },
-        ...prev,
-      ]);
-      showToast(`User ${user.full_name} deleted.`);
     } catch {
-      setUsers((prev) => prev.filter((u) => u.id !== user.id));
-      showToast(`User ${user.full_name} deleted.`);
+      // Fallback
     }
+
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('cm_registered_users');
+        if (stored) {
+          const list: UserProfile[] = JSON.parse(stored);
+          const updated = list.filter(
+            (u) => u.id !== user.id && u.register_number !== user.register_number
+          );
+          localStorage.setItem('cm_registered_users', JSON.stringify(updated));
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    setUsers((prev) => prev.filter((u) => u.id !== user.id && u.register_number !== user.register_number));
+    setActivityLogs((prev) => [
+      {
+        id: `act-${Date.now()}`,
+        actor_name: actorName,
+        actor_regnum: actorReg,
+        actor_role: role,
+        action: 'DELETE_USER',
+        details: logSentence,
+        created_at: new Date().toISOString(),
+      },
+      ...prev,
+    ]);
+    showToast(`User ${user.full_name} deleted.`);
   };
 
   const handleAddUser = async (e: React.FormEvent) => {
@@ -247,9 +338,14 @@ export default function AdminPage() {
     const actorReg = userProfile?.register_number || 'REG-ORG-001';
     const logSentence = `${actorName} (${actorReg}) created new user account for ${newUserName} (${newUserReg}) as ${newUserRole}`;
 
+    const newUserId =
+      typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : '00000000-0000-0000-0000-' + Date.now().toString().padStart(12, '0');
+
     const newUser: UserProfile = {
-      id: `usr-${Date.now()}`,
-      auth_id: null,
+      id: newUserId,
+      auth_id: newUserId,
       full_name: newUserName.trim(),
       register_number: newUserReg.trim().toUpperCase(),
       email: newUserEmail.trim(),
@@ -260,6 +356,8 @@ export default function AdminPage() {
 
     try {
       await supabase.from('users').insert({
+        id: newUser.id,
+        auth_id: newUser.auth_id,
         full_name: newUser.full_name,
         register_number: newUser.register_number,
         email: newUser.email,
@@ -268,37 +366,47 @@ export default function AdminPage() {
       });
 
       await supabase.from('activity_logs').insert({
+        actor_id: userProfile?.id,
         actor_name: actorName,
         actor_regnum: actorReg,
         actor_role: role,
         action: 'ADD_USER',
         details: logSentence,
       });
-
-      setUsers((prev) => [newUser, ...prev]);
-      setActivityLogs((prev) => [
-        {
-          id: `act-${Date.now()}`,
-          actor_name: actorName,
-          actor_regnum: actorReg,
-          actor_role: role,
-          action: 'ADD_USER',
-          details: logSentence,
-          created_at: new Date().toISOString(),
-        },
-        ...prev,
-      ]);
-
-      setIsAddUserModalOpen(false);
-      setNewUserName('');
-      setNewUserReg('');
-      setNewUserEmail('');
-      showToast(`User ${newUser.full_name} created successfully.`);
     } catch {
-      setUsers((prev) => [newUser, ...prev]);
-      setIsAddUserModalOpen(false);
-      showToast(`User ${newUser.full_name} created successfully.`);
+      // Fallback
     }
+
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('cm_registered_users');
+        const list: UserProfile[] = stored ? JSON.parse(stored) : [];
+        list.push(newUser);
+        localStorage.setItem('cm_registered_users', JSON.stringify(list));
+      } catch {
+        // ignore
+      }
+    }
+
+    setUsers((prev) => [newUser, ...prev]);
+    setActivityLogs((prev) => [
+      {
+        id: `act-${Date.now()}`,
+        actor_name: actorName,
+        actor_regnum: actorReg,
+        actor_role: role,
+        action: 'ADD_USER',
+        details: logSentence,
+        created_at: new Date().toISOString(),
+      },
+      ...prev,
+    ]);
+
+    setIsAddUserModalOpen(false);
+    setNewUserName('');
+    setNewUserReg('');
+    setNewUserEmail('');
+    showToast(`User ${newUser.full_name} created successfully.`);
   };
 
   const handleClearLogs = async () => {

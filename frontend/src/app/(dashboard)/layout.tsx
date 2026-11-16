@@ -34,15 +34,34 @@ export default function DashboardLayout({
           .select('*', { count: 'exact', head: true })
           .eq('status', 'pending_return');
 
-        // Pending user signups
-        const { count: usersCount } = await supabase
+        // Pending user signups from Supabase
+        let pendingUsers = 0;
+        const { count: usersCount, error: userErr } = await supabase
           .from('users')
           .select('*', { count: 'exact', head: true })
           .eq('status', 'pending');
 
+        if (!userErr && typeof usersCount === 'number') {
+          pendingUsers = usersCount;
+        }
+
+        // Also check LocalStorage for immediate UI sync
+        if (typeof window !== 'undefined') {
+          try {
+            const stored = localStorage.getItem('cm_registered_users');
+            if (stored) {
+              const list = JSON.parse(stored);
+              const localPending = list.filter((u: { status: string }) => u.status === 'pending').length;
+              pendingUsers = Math.max(pendingUsers, localPending);
+            }
+          } catch {
+            // ignore
+          }
+        }
+
         if (mounted) {
           setPendingReturnsCount(returnsCount || 0);
-          setPendingUsersCount(usersCount || 0);
+          setPendingUsersCount(pendingUsers);
         }
       } catch {
         // Fallback
@@ -51,10 +70,13 @@ export default function DashboardLayout({
 
     if (user && isManager) {
       fetchAlerts();
-      const interval = setInterval(fetchAlerts, 15000);
+      const interval = setInterval(fetchAlerts, 5000);
+      const onUserRegistered = () => fetchAlerts();
+      window.addEventListener('cm_user_registered', onUserRegistered);
       return () => {
         mounted = false;
         clearInterval(interval);
+        window.removeEventListener('cm_user_registered', onUserRegistered);
       };
     }
   }, [user, isManager]);

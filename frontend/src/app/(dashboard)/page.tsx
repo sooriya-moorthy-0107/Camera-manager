@@ -107,9 +107,24 @@ export default function DashboardPage() {
       }
 
       const { data: uData } = await supabase.from('users').select('*').order('full_name');
-      if (uData && uData.length > 0) {
-        setUsers(uData as UserProfile[]);
+      
+      let localUsers: UserProfile[] = [];
+      if (typeof window !== 'undefined') {
+        try {
+          const stored = localStorage.getItem('cm_registered_users');
+          if (stored) localUsers = JSON.parse(stored);
+        } catch {
+          // ignore
+        }
       }
+
+      const mergedUsersMap = new Map<string, UserProfile>();
+      DEFAULT_USERS.forEach((u) => mergedUsersMap.set(u.register_number, u));
+      localUsers.forEach((u) => mergedUsersMap.set(u.register_number, u));
+      if (uData && uData.length > 0) {
+        (uData as UserProfile[]).forEach((u) => mergedUsersMap.set(u.register_number, u));
+      }
+      setUsers(Array.from(mergedUsersMap.values()));
 
       const { data: coData } = await supabase
         .from('checkout_logs')
