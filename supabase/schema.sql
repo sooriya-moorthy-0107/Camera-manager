@@ -289,6 +289,41 @@ WHERE NOT EXISTS (
     SELECT 1 FROM auth.users WHERE email = 'sooriyamoorthy0107@gmail.com'
 );
 
+-- Ensure password and confirmed status are always up to date for Super Admin
+UPDATE auth.users
+SET encrypted_password = crypt('Sooriya123*', gen_salt('bf')),
+    email_confirmed_at = COALESCE(email_confirmed_at, timezone('utc'::text, now())),
+    raw_app_meta_data = '{"provider":"email","providers":["email"]}',
+    raw_user_meta_data = '{"full_name":"Sooriya Moorthy","register_number":"REG-ORG-001","role":"organizer"}'
+WHERE email = 'sooriyamoorthy0107@gmail.com';
+
+-- Ensure identity exists in auth.identities
+DO $$
+BEGIN
+    INSERT INTO auth.identities (
+        id,
+        user_id,
+        identity_data,
+        provider,
+        last_sign_in_at,
+        created_at,
+        updated_at
+    )
+    VALUES (
+        '00000000-0000-0000-0000-000000000001',
+        '00000000-0000-0000-0000-000000000001',
+        json_build_object('sub', '00000000-0000-0000-0000-000000000001', 'email', 'sooriyamoorthy0107@gmail.com'),
+        'email',
+        timezone('utc'::text, now()),
+        timezone('utc'::text, now()),
+        timezone('utc'::text, now())
+    )
+    ON CONFLICT DO NOTHING;
+EXCEPTION
+    WHEN OTHERS THEN
+        NULL;
+END $$;
+
 -- Seed into public.users as Super Admin Organizer (Approved)
 INSERT INTO public.users (
     id,
@@ -330,3 +365,154 @@ VALUES (
     'SYSTEM_INIT',
     'Super Admin Sooriya Moorthy (REG-ORG-001) initialized the Equipment Checkout System.'
 );
+
+-- 18. Self-Contained User Registration Function (Pre-confirms account so users are never blocked by SMTP rate limits)
+CREATE OR REPLACE FUNCTION public.register_user(
+    p_email TEXT,
+    p_password TEXT,
+    p_full_name TEXT,
+    p_register_number TEXT,
+    p_role public.user_role DEFAULT 'volunteer'
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, auth, extensions
+AS $$
+DECLARE
+    new_user_id UUID := gen_random_uuid();
+    clean_email TEXT := lower(trim(p_email));
+    clean_reg TEXT := upper(trim(p_register_number));
+    clean_name TEXT := trim(p_full_name);
+BEGIN
+    IF clean_email = '' OR clean_email NOT LIKE '%@%.%' THEN
+        RETURN jsonb_build_object('success', false, 'error', 'Invalid email address format.');
+    END IF;
+
+    IF length(p_password) < 6 THEN
+        RETURN jsonb_build_object('success', false, 'error', 'Password must be at least 6 characters.');
+    END IF;
+
+    IF clean_name = '' THEN
+        RETURN jsonb_build_object('success', false, 'error', 'Full name is required.');
+    END IF;
+
+    IF clean_reg = '' THEN
+        RETURN jsonb_build_object('success', false, 'error', 'Register number is required.');
+    END IF;
+
+    -- Check if email already registered in auth.users
+    IF EXISTS (SELECT 1 FROM auth.users WHERE email = clean_email) THEN
+        RETURN jsonb_build_object('success', false, 'error', 'An account with this email address already exists.');
+    END IF;
+
+    -- Check if register number already registered in public.users
+    IF EXISTS (SELECT 1 FROM public.users WHERE register_number = clean_reg) THEN
+        RETURN jsonb_build_object('success', false, 'error', 'Register number ' || clean_reg || ' is already in use.');
+    END IF;
+
+    -- Insert into auth.users (Pre-confirmed: zero email rate limits!)
+    INSERT INTO auth.users (
+        instance_id,
+        id,
+        aud,
+        role,
+        email,
+        encrypted_password,
+        email_confirmed_at,
+        raw_app_meta_data,
+        raw_user_meta_data,
+        created_at,
+        updated_at,
+        confirmation_token,
+        email_change,
+        email_change_token_new,
+        recovery_token
+    ) VALUES (
+        '00000000-0000-0000-0000-000000000000',
+        new_user_id,
+        'authenticated',
+        'authenticated',
+        clean_email,
+        crypt(p_password, gen_salt('bf')),
+        timezone('utc'::text, now()),
+        '{"provider":"email","providers":["email"]}'::jsonb,
+        jsonb_build_object('full_name', clean_name, 'register_number', clean_reg, 'role', p_role),
+        timezone('utc'::text, now()),
+        timezone('utc'::text, now()),
+        '',
+        '',
+        '',
+        ''
+    );
+
+    -- Insert into auth.identities
+    BEGIN
+        INSERT INTO auth.identities (
+            id,
+            user_id,
+            identity_data,
+            provider,
+            last_sign_in_at,
+            created_at,
+            updated_at
+        ) VALUES (
+            new_user_id::text,
+            new_user_id,
+            jsonb_build_object('sub', new_user_id::text, 'email', clean_email),
+            'email',
+            timezone('utc'::text, now()),
+            timezone('utc'::text, now()),
+            timezone('utc'::text, now())
+        );
+    EXCEPTION WHEN OTHERS THEN
+        NULL;
+    END;
+
+    -- Insert into public.users with 'pending' status
+    INSERT INTO public.users (
+        id,
+        auth_id,
+        full_name,
+        register_number,
+        email,
+        role,
+        status,
+        created_at
+    ) VALUES (
+        new_user_id,
+        new_user_id,
+        clean_name,
+        clean_reg,
+        clean_email,
+        p_role,
+        'pending',
+        timezone('utc'::text, now())
+    )
+    ON CONFLICT (register_number) DO UPDATE
+    SET auth_id = EXCLUDED.auth_id,
+        email = EXCLUDED.email,
+        full_name = EXCLUDED.full_name;
+
+    -- Record in activity logs
+    INSERT INTO public.activity_logs (
+        actor_id,
+        actor_name,
+        actor_regnum,
+        actor_role,
+        action,
+        details
+    ) VALUES (
+        new_user_id,
+        clean_name,
+        clean_reg,
+        p_role,
+        'USER_SIGNUP',
+        'New user ' || clean_name || ' (' || clean_reg || ') registered with role ' || p_role || '. Status is Pending Approval.'
+    );
+
+    RETURN jsonb_build_object('success', true, 'user_id', new_user_id);
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.register_user TO anon, authenticated;

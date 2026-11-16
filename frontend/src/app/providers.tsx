@@ -178,6 +178,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // 2. Standard Supabase Sign In
     const { data, error } = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
     if (error) {
+      // Check if user exists in public.users to give a clear, informative status message
+      try {
+        const { data: userRow } = await supabase
+          .from('users')
+          .select('status, role, full_name')
+          .eq('email', cleanEmail)
+          .maybeSingle();
+
+        if (userRow?.status === 'pending') {
+          return {
+            error: `Account for ${userRow.full_name || cleanEmail} is PENDING APPROVAL by an Organizer or Manager. Please wait for authorization.`,
+          };
+        }
+        if (userRow?.status === 'rejected') {
+          return { error: 'Your account registration was rejected. Please contact an Organizer.' };
+        }
+      } catch {
+        // ignore
+      }
+
       return { error: error.message };
     }
     if (data.user) {
@@ -197,7 +217,54 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const cleanEmail = email.trim().toLowerCase();
     const cleanReg = registerNumber.trim().toUpperCase();
 
-    // 1. Attempt Supabase email signup with metadata
+    // 1. Attempt secure in-database registration RPC (Pre-confirms, zero SMTP rate limits)
+    try {
+      const { data: rpcRes, error: rpcErr } = await supabase.rpc('register_user', {
+        p_email: cleanEmail,
+        p_password: password,
+        p_full_name: fullName,
+        p_register_number: cleanReg,
+        p_role: role,
+      });
+
+      if (!rpcErr && rpcRes) {
+        const resObj = rpcRes as { success: boolean; error?: string; user_id?: string };
+        if (!resObj.success && resObj.error) {
+          return { error: resObj.error };
+        }
+
+        const newProfile: UserProfile = {
+          id: resObj.user_id || crypto.randomUUID(),
+          auth_id: resObj.user_id || crypto.randomUUID(),
+          email: cleanEmail,
+          full_name: fullName,
+          register_number: cleanReg,
+          role,
+          status: 'pending',
+          created_at: new Date().toISOString(),
+        };
+
+        if (typeof window !== 'undefined') {
+          try {
+            const stored = localStorage.getItem('cm_registered_users');
+            const list: UserProfile[] = stored ? JSON.parse(stored) : [];
+            const idx = list.findIndex((u) => u.register_number === cleanReg || u.email === cleanEmail);
+            if (idx >= 0) list[idx] = newProfile;
+            else list.push(newProfile);
+            localStorage.setItem('cm_registered_users', JSON.stringify(list));
+            window.dispatchEvent(new Event('cm_user_registered'));
+          } catch {
+            // ignore
+          }
+        }
+
+        return { isPending: true };
+      }
+    } catch (rpcEx) {
+      console.warn('RPC register_user exception, falling back to standard signup:', rpcEx);
+    }
+
+    // 2. Fallback to Supabase Auth signUp
     let authUserId: string | null = null;
     try {
       const { data, error } = await supabase.auth.signUp({
@@ -228,7 +295,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const newProfile: UserProfile = {
       id: userId,
-      auth_id: authUserId || userId,
+      auth_id: authUserId, // Set null if authUserId is null to avoid foreign key violations
       email: cleanEmail,
       full_name: fullName,
       register_number: cleanReg,
@@ -237,7 +304,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       created_at: new Date().toISOString(),
     };
 
-    // 2. Direct upsert into public.users table
+    // 3. Direct upsert into public.users table
     try {
       const { error: upsertErr } = await supabase
         .from('users')
@@ -259,7 +326,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.warn('Database insert error:', dbErr);
     }
 
-    // 3. Persist to localStorage for guaranteed admin visibility
+    // 4. Persist to localStorage for guaranteed admin visibility
     if (typeof window !== 'undefined') {
       try {
         const stored = localStorage.getItem('cm_registered_users');
