@@ -32,9 +32,26 @@ An open-source, mobile-responsive management system designed to track camera gea
 
 ### 2. Environment Variables
 
-Create a `.env.local` file in the root directory of the project and add your Supabase project credentials:
+Create a `.env.local` file in the `frontend` directory of the project and add your Supabase project credentials:
 
 ```env
 NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 ```
+
+### 3. Running the Development Server
+
+From the project root:
+
+```bash
+npm run dev
+```
+
+Or from the `frontend` directory:
+
+```bash
+cd frontend
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000) in your browser.
